@@ -5,7 +5,7 @@
 Built for zero-inbox practitioners who don't want to ship their reading habits to a third-party SaaS.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://docs.python.org/3/)
-[![Tests](https://img.shields.io/badge/tests-137%20passing-brightgreen.svg)](#-tests)
+[![Tests](https://img.shields.io/badge/tests-145%20passing-brightgreen.svg)](#-tests)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-yes-success.svg)](#)
 
 ---
@@ -47,24 +47,36 @@ Runs unattended via `launchd` (macOS) or `systemd` (Linux). Costs about a dollar
 
 Prerequisites: [`uv`](https://docs.astral.sh/uv/), an Anthropic API key, a Google Cloud OAuth Desktop client, and a Slack app (Socket Mode).
 
+> Prefer one command? `uv run mail-agent init` walks through all four tiers interactively.
+
+### 1. Try it in 60 seconds (no creds)
+
 ```bash
-git clone <your-fork>.git mail-agent
+git clone https://github.com/polurezov8/mail-agent.git mail-agent
 cd mail-agent
 uv sync
+uv run mail-agent triage --mock
+```
 
-cp .env.example .env
-chmod 600 .env
-# fill ANTHROPIC_API_KEY, GMAIL_ACCOUNTS, SLACK_BOT_TOKEN / SLACK_APP_TOKEN / SLACK_USER_ID
+### 2. Connect Gmail
 
-mkdir -p creds && chmod 700 creds
-mv ~/Downloads/client_secret_*.json creds/personal_credentials.json
-chmod 600 creds/personal_credentials.json
+1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → Credentials → **OAuth Desktop client** → Download JSON.
+2. `mkdir -p creds && chmod 700 creds`
+3. `mv ~/Downloads/client_secret_*.json creds/personal_credentials.json && chmod 600 creds/personal_credentials.json`
+4. `cp .env.example .env && chmod 600 .env` — fill `ANTHROPIC_API_KEY`, `GMAIL_ACCOUNTS=personal`
+5. **Verify:** `uv run mail-agent setup-gmail`
 
-uv run mail-agent setup-gmail            # browser OAuth, once
-uv run mail-agent slack test             # confirm Slack DM works
-uv run mail-agent doctor                 # sanity check everything
-uv run mail-agent triage --mock          # try the pipeline on built-in mock data
-uv run mail-agent schedule install       # background jobs: poll + daily + listener
+### 3. Connect Slack
+
+1. Create a Slack app (Socket Mode); grab Bot, App, and User tokens.
+2. Paste into `.env`: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_USER_ID`.
+3. **Verify:** `uv run mail-agent slack test`
+
+### 4. Run unattended
+
+```bash
+uv run mail-agent doctor
+uv run mail-agent schedule install
 ```
 
 ---
@@ -91,20 +103,28 @@ Every digest / respond post carries three buttons: **Mark read**, **Open in Gmai
 
 ## 🏗️ Architecture
 
-```
-Gmail (poll every N min)
-   ↓ fetch_unread
-   processed_messages dedupe
-   ↓
-   triage  ─── sender_override?  ─→ TriageDecision (source = user_correction)
-            ├─ match_first rule  ─→ TriageDecision (source = header_rule)
-            └─ LLM classify       ─→ TriageDecision (source = llm_fast | llm_smart)
-   ↓ _gate (bucket + opt-in + confidence floor)
-   AutoMarkResult                          SurfaceResult
-   ↓ node_mark_read                        ↓ node_slack_dispatch
-   gmail.modify (UNREAD off)               Slack DM (respond) / digest (notify)
-   ↓                                       ↓
-   audit log                               buttons → corrections → next cycle
+```mermaid
+flowchart LR
+    A([Gmail poll N min]) --> B[fetch_unread]
+    B --> C{processed_messages\ndedupe}
+    C -->|new| D[triage]
+    C -->|seen| Z([skip])
+
+    D --> E{source?}
+    E -->|sender_override| F[TriageDecision]
+    E -->|header_rule| F
+    E -->|LLM fast → smart| F
+
+    F --> G{_gate\nbucket + opt-in + floor}
+    G -->|auto| H[/AutoMarkResult/]
+    G -->|surface| I[/SurfaceResult/]
+
+    H --> J[gmail.modify\nUNREAD off]
+    J --> K[(audit log)]
+
+    I --> L[Slack DM / digest]
+    L --> M{{Wrong-bucket button}}
+    M -. correction .-> D
 ```
 
 LangGraph wires the nodes with conditional edges: an empty inbox short-circuits to `report`, no `AutoMarkResult` skips `mark_read`, no `SurfaceResult` (or `--no-slack`) skips `slack_dispatch`.
@@ -166,34 +186,34 @@ Use `mail-agent rules wizard` for guided setup, or `mail-agent rules add "..."` 
 ## 🧪 Tests
 
 ```bash
-uv run pytest -q                                  # 137 tests, ~0.4s
+uv run pytest -q                                  # 145 tests, ~0.5s
 uv run ruff check src tests
 uv run mail-agent eval run --min-bucket-accuracy 0.85
 ```
 
 ---
 
-## 🚧 Honest limits
+## 📐 Scope
 
-- **Triage only.** No drafting, no sending, no reply suggestions. By design.
-- **Single user.** No multi-tenant story; secrets and rules are per-checkout.
-- **Personal use focus.** Work-mail integration depends on your org's policy around third-party LLM processing.
-- **NER not included.** Name redaction is an explicit list — names you don't list are not stripped.
-- **Eval coverage is thin** on `respond` / `notify` until you accumulate real fixtures from your inbox.
-- **Sender override** activates after a single user correction (opt-in checkbox in the modal). Aggressive by design; undo any time via `/mail corrections undo`.
+By design:
+
+- **Triage only** — no drafting, sending, or reply suggestions.
+- **Single user** — secrets and rules are per-checkout; no multi-tenant story.
+- **Personal use focus** — work-mail integration depends on your org's third-party LLM policy.
+- **Sender override is aggressive** — a single correction with the checkbox active applies sender-wide. Undo via `/mail corrections undo`.
 
 ---
 
 ## 🗺️ Roadmap
 
-Open ideas for mail-agent, not promises:
+Open ideas, not promises:
 
 - 💬 Conversational DM interface (talk to the bot in DMs, not just via slash)
-- 🗂️ Per-account rule overrides for multi-account setups
-- 🤖 Optional NER for broader name redaction
-- ✍️ Reply drafts on `respond` bucket (gated, draft-only, never auto-send)
-- 📅 Smarter calendar handling (1:1 cancellation detection via thread context)
-- 📈 Long-horizon learning from accumulated corrections (rule suggestions)
+- 🗂️ Per-account / multi-tenant rule overrides
+- 🤖 Optional NER for name redaction beyond the explicit list
+- ✍️ Reply drafts on `respond` (gated, draft-only, never auto-send)
+- 📈 Long-horizon learning from corrections (rule suggestions)
+- 🧪 Broader eval coverage on `respond` / `notify`
 
 ---
 

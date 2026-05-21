@@ -49,6 +49,18 @@ def triage(
     )
 
 
+@app.command()
+def init(
+    skip_gmail: bool = typer.Option(False, "--skip-gmail", help="Skip Gmail OAuth step."),
+    skip_slack: bool = typer.Option(False, "--skip-slack", help="Skip Slack test step."),
+    skip_doctor: bool = typer.Option(False, "--skip-doctor", help="Skip doctor step."),
+) -> None:
+    """One-shot bootstrap: .env, creds perms, Gmail OAuth, Slack ping, doctor."""
+    from .init_cmd import run_init
+
+    raise typer.Exit(code=run_init(skip_gmail=skip_gmail, skip_slack=skip_slack, skip_doctor=skip_doctor))
+
+
 @app.command("setup-gmail")
 def setup_gmail() -> None:
     """Run interactive OAuth flow for each configured Gmail account."""
