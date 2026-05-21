@@ -1,0 +1,22 @@
+.env
+.env.local
+*.db
+*.sqlite
+*.sqlite3
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+dist/
+build/
+*.egg-info/
+creds/
+gmail_token.json
+gmail_credentials.json
+mail_agent.db
+eval/fixtures.yaml
+# `eval/fixtures.public.yaml` is intentionally NOT ignored — public synthetic
+# regression set is meant to be committed.
+logs/

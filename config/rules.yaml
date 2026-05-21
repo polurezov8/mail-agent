@@ -1,0 +1,97 @@
+rules:
+- name: github_notifications
+  description: GitHub notification emails (PR/issue/CI/security)
+  match:
+    from_domain:
+    - github.com
+  bucket: ignore
+  auto_mark_read: true
+- name: linkedin_notifications
+  description: LinkedIn invites, messages, job alerts, post stats
+  match:
+    from_domain:
+    - linkedin.com
+  bucket: ignore
+  auto_mark_read: true
+- name: slack_notifications
+  description: Slack workspace mention/digest emails (you read Slack in Slack)
+  match:
+    from_domain:
+    - slack.com
+  bucket: ignore
+  auto_mark_read: true
+- name: linear_notifications
+  description: Linear assignment / mention notifications
+  match:
+    from_domain:
+    - linear.app
+    - notifications.linear.app
+  bucket: notify
+  auto_mark_read: false
+- name: apple_notifications
+  description: Apple ID, iCloud billing, App Store, Apple receipts
+  match:
+    from_domain:
+    - email.apple.com
+    - apple.com
+    - insideicloud.icloud.com
+  bucket: ignore
+  auto_mark_read: true
+- name: fitness_apps
+  description: Fitness app notifications (example)
+  match:
+    from_domain:
+    - strava.com
+    - email.strava.com
+  bucket: ignore
+  auto_mark_read: true
+- name: social_apps
+  description: Social network digests (example)
+  match:
+    from_domain:
+    - mail.instagram.com
+    - facebookmail.com
+    - twitter.com
+    - x.com
+  bucket: ignore
+  auto_mark_read: true
+- name: newsletters
+  description: Generic newsletters (any mail with List-Unsubscribe header)
+  match:
+    has_header:
+    - List-Unsubscribe
+  bucket: ignore
+  auto_mark_read: true
+llm:
+  enabled: true
+  model_fast: claude-haiku-4-5-20251001
+  model_smart: claude-sonnet-4-6
+  confidence_threshold: 0.7
+  auto_mark_min_confidence: 0.85
+  buckets:
+  - ignore
+  - notify
+  - respond
+  nl_rules:
+  - 'Calendar invites and updates (Content-Type: text/calendar) default to ignore
+    + auto-mark.'
+  - Calendar CANCELLATION (subject starts with 'Canceled:' or 'Cancelled:') of a 1:1
+    meeting (only you + one other person) → respond. Group meeting cancellation →
+    ignore + auto-mark.
+  - Security alerts from Google Account, Apple ID, banks, payment providers (Stripe,
+    PayPal, etc.), 2FA providers → respond. These are time-sensitive.
+  - Mail from a real human directly asking you a question (not automated, not a newsletter,
+    not a mass mailing) → respond.
+  - Cold sales pitch from an unknown vendor → ignore + auto-mark, UNLESS the message
+    directly references your product, team, or an existing customer/partner.
+  - Order confirmations, shipping notifications, receipts → ignore + auto-mark.
+  - Recruiter outreach (subject mentions 'opportunity', 'role at', 'position at',
+    'reach out about a role') → ignore + auto-mark.
+  - Promotional offers, sales, coupons, discount codes → ignore + auto-mark.
+  - Account verification codes, magic links, password resets → respond ONLY if you
+    didn't expect them (could be phishing/compromise). If clearly correlated with
+    a recent action of yours, ignore.
+  - Vendor / SaaS product changelog and announcements ('New feature in X', 'changelog')
+    → ignore + auto-mark.
+  - When in doubt between notify and respond, prefer notify. When in doubt between
+    ignore and notify, prefer notify.

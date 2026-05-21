@@ -1,0 +1,252 @@
+# Public, synthetic eval fixtures. Safe to commit (no personal mail).
+# Covers all three buckets so regression gating catches respond/notify drift,
+# not just ignore. Pair with eval/fixtures.yaml (gitignored personal cases).
+examples:
+
+# ── ignore: header-rule hits (deterministic) ─────────────────────────────────
+  - email:
+      id: pub-i-1
+      thread_id: pub-i-1
+      account: public
+      from_email: notifications@github.com
+      from_name: GitHub
+      to: [me@example.com]
+      subject: "[org/repo] PR #42 was merged"
+      snippet: "Your pull request has been merged into main."
+      headers:
+        From: "GitHub <notifications@github.com>"
+        Subject: "[org/repo] PR #42 was merged"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: ignore
+    expected_rule_name: github_notifications
+
+  - email:
+      id: pub-i-2
+      thread_id: pub-i-2
+      account: public
+      from_email: invitations@linkedin.com
+      from_name: LinkedIn
+      to: [me@example.com]
+      subject: "I want to connect"
+      snippet: "Jane Doe wants to connect with you on LinkedIn."
+      headers:
+        From: "LinkedIn <invitations@linkedin.com>"
+        Subject: "I want to connect"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: ignore
+    expected_rule_name: linkedin_notifications
+
+  - email:
+      id: pub-i-3
+      thread_id: pub-i-3
+      account: public
+      from_email: no-reply@email.apple.com
+      from_name: Apple
+      to: [me@example.com]
+      subject: "You will be charged for your iCloud+ plan in 2 days"
+      snippet: "Your subscription will renew on 2026-05-23."
+      headers:
+        From: "Apple <no-reply@email.apple.com>"
+        Subject: "You will be charged for your iCloud+ plan in 2 days"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: ignore
+    expected_rule_name: apple_notifications
+
+  - email:
+      id: pub-i-4
+      thread_id: pub-i-4
+      account: public
+      from_email: newsletter@techcrunch.com
+      from_name: TechCrunch
+      to: [me@example.com]
+      subject: "TechCrunch Daily: weekly IT digest"
+      snippet: "Weekly overview of tech industry news."
+      headers:
+        From: "TechCrunch <newsletter@techcrunch.com>"
+        Subject: "TechCrunch Daily: weekly IT digest"
+        List-Unsubscribe: "<mailto:unsub@techcrunch.com>"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: ignore
+    expected_rule_name: newsletters
+
+  - email:
+      id: pub-i-5
+      thread_id: pub-i-5
+      account: public
+      from_email: noreply@medium.com
+      from_name: Medium Daily Digest
+      to: [me@example.com]
+      subject: "Today's highlights"
+      snippet: "Stories picked for you."
+      headers:
+        From: "Medium <noreply@medium.com>"
+        Subject: "Today's highlights"
+        List-Unsubscribe: "<mailto:unsub@medium.com>"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: ignore
+    expected_rule_name: newsletters
+
+  - email:
+      id: pub-i-6
+      thread_id: pub-i-6
+      account: public
+      from_email: noreply@notifications.slack.com
+      from_name: Slack
+      to: [me@example.com]
+      subject: "You have 3 new messages in #engineering"
+      snippet: "Catch up on what you missed."
+      headers:
+        From: "Slack <noreply@notifications.slack.com>"
+        Subject: "You have 3 new messages in #engineering"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: ignore
+    expected_rule_name: slack_notifications
+
+# ── notify: header-rule hits + LLM cases ─────────────────────────────────────
+  - email:
+      id: pub-n-1
+      thread_id: pub-n-1
+      account: public
+      from_email: notifications@linear.app
+      from_name: Linear
+      to: [me@example.com]
+      subject: "ENG-123 assigned to you"
+      snippet: "Jane Doe assigned you ENG-123."
+      headers:
+        From: "Linear <notifications@linear.app>"
+        Subject: "ENG-123 assigned to you"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: notify
+    expected_rule_name: linear_notifications
+
+  - email:
+      id: pub-n-2
+      thread_id: pub-n-2
+      account: public
+      from_email: alerts@sentry.io
+      from_name: Sentry
+      to: [me@example.com]
+      subject: "Issue: TypeError in production"
+      snippet: "Sentry detected a new high-frequency error."
+      headers:
+        From: "Sentry <alerts@sentry.io>"
+        Subject: "Issue: TypeError in production"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: notify
+    notes: "Monitoring alert — LLM should pick notify"
+
+  - email:
+      id: pub-n-3
+      thread_id: pub-n-3
+      account: public
+      from_email: no-reply@1password.com
+      from_name: 1Password
+      to: [me@example.com]
+      subject: "Sign-in attempt from a new device"
+      snippet: "You just signed in to 1Password from a new device. Was this you?"
+      headers:
+        From: "1Password <no-reply@1password.com>"
+        Subject: "Sign-in attempt from a new device"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: notify
+    notes: "Sign-in confirmation — surface but not urgent unless unexpected"
+
+# ── respond: LLM-classified, expect high recall ──────────────────────────────
+  - email:
+      id: pub-r-1
+      thread_id: pub-r-1
+      account: public
+      from_email: jane@partner-customer.com
+      from_name: Jane Smith
+      to: [me@example.com]
+      subject: "Quick question about the integration spec"
+      snippet: "Hi there, can you confirm whether endpoint X supports batch mode? Need to know before our demo Friday."
+      headers:
+        From: "Jane Smith <jane@partner-customer.com>"
+        Subject: "Quick question about the integration spec"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: respond
+    notes: "Real human asking a direct, time-bounded question"
+
+  - email:
+      id: pub-r-2
+      thread_id: pub-r-2
+      account: public
+      from_email: no-reply@accounts.google.com
+      from_name: Google
+      to: [me@example.com]
+      subject: "Security alert: new sign-in to your account"
+      snippet: "We noticed a new sign-in to your Google Account from an unrecognized device."
+      headers:
+        From: "Google <no-reply@accounts.google.com>"
+        Subject: "Security alert: new sign-in to your account"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: respond
+    notes: "Time-sensitive security alert"
+
+  - email:
+      id: pub-r-3
+      thread_id: pub-r-3
+      account: public
+      from_email: ceo@my-company.example
+      from_name: CEO
+      to: [me@example.com]
+      subject: "Re: Q3 roadmap — confirm by EOD"
+      snippet: "Need your sign-off on the Q3 roadmap before the board call tomorrow morning."
+      headers:
+        From: "CEO <ceo@my-company.example>"
+        Subject: "Re: Q3 roadmap — confirm by EOD"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: respond
+    notes: "Direct ask from leadership, time-bounded"
+
+  - email:
+      id: pub-r-4
+      thread_id: pub-r-4
+      account: public
+      from_email: no-reply@notifications.stripe.com
+      from_name: Stripe
+      to: [me@example.com]
+      subject: "Action required: dispute opened on your account"
+      snippet: "A customer has opened a dispute. You have 7 days to respond with evidence."
+      headers:
+        From: "Stripe <no-reply@notifications.stripe.com>"
+        Subject: "Action required: dispute opened on your account"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: respond
+    notes: "Payment provider action-required notice"
+
+# ── edge cases LLM should get right ──────────────────────────────────────────
+  - email:
+      id: pub-e-1
+      thread_id: pub-e-1
+      account: public
+      from_email: orders@shipped.example.com
+      from_name: Shipped
+      to: [me@example.com]
+      subject: "Order #12345 has been shipped"
+      snippet: "Your order is on its way."
+      headers:
+        From: "Shipped <orders@shipped.example.com>"
+        Subject: "Order #12345 has been shipped"
+        List-Unsubscribe: "<mailto:unsub@shipped.example.com>"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: ignore
+    expected_rule_name: newsletters
+    notes: "Order shipping notification with List-Unsubscribe → newsletters rule"
+
+  - email:
+      id: pub-e-2
+      thread_id: pub-e-2
+      account: public
+      from_email: recruiter@coldstartup.example
+      from_name: Recruiter X
+      to: [me@example.com]
+      subject: "Exciting opportunity for a CTO role"
+      snippet: "Hi there, I came across your profile and wanted to share an opportunity."
+      headers:
+        From: "Recruiter X <recruiter@coldstartup.example>"
+        Subject: "Exciting opportunity for a CTO role"
+      received_at: "2026-05-21T08:00:00+00:00"
+    expected_bucket: ignore
+    notes: "Cold recruiter outreach — LLM should classify ignore per NL rules"
