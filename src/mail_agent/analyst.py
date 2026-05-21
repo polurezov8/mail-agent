@@ -26,15 +26,15 @@ _PLAN_SYSTEM = """You translate a user's inbox question into a structured analys
 
 Return three fields:
   gmail_query: Gmail search syntax string (from:, subject:, newer_than:Nd/Nw/Nm, etc.)
-  extraction_instruction: what to extract from each email body — be specific (e.g. "extract: price in USD, billing date, item name")
+  extraction_instruction: what to extract from each email — be specific. Always include the currency code/symbol, never assume USD.
   synthesis_instruction: how to combine extracted data to answer the question (e.g. "sum all prices, group by month, format as table")
   suggested_limit: integer 1-200 if the user implies a count, otherwise null
 
 Examples:
   "subscriptions from Apple last 3 months, total cost"
     → gmail_query="from:apple.com newer_than:3m"
-    → extraction_instruction="extract: item/subscription name, charge amount in USD, billing date. Return null if no price found."
-    → synthesis_instruction="sum all charges, group by month, compute grand total"
+    → extraction_instruction="extract: item/subscription name, charge amount (any currency — include currency code), billing date"
+    → synthesis_instruction="sum all charges grouped by currency, compute grand total per currency"
     → suggested_limit=null
 
   "last 5 emails from my bank"
@@ -133,10 +133,13 @@ def extract_batch(
         ]
     )
     text = response.content if hasattr(response, "content") else str(response)
+    # Strip markdown fences Haiku sometimes adds despite instructions
+    cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.MULTILINE)
+    cleaned = re.sub(r"```\s*$", "", cleaned.strip(), flags=re.MULTILINE).strip()
     try:
-        return json.loads(text)
+        return json.loads(cleaned)
     except json.JSONDecodeError:
-        logger.warning("extract_batch: JSON parse failed, returning empty batch")
+        logger.warning("extract_batch: JSON parse failed. Raw response: %.500s", text)
         return []
 
 
@@ -259,13 +262,11 @@ def analyse_inbox(question: str, cfg: LLMConfig) -> AnalysisAnswer:
 
     relevant_count = sum(1 for r in all_extractions if r.extracted is not None)
     if relevant_count == 0:
-        return AnalysisAnswer(
-            answer=(
-                f"Found {len(messages)} email(s) matching your query but none contained "
-                "the information needed to answer your question."
-            ),
-            format_hint="paragraph",
-            source_count=0,
+        tried = f"`{plan.gmail_query}`" if plan.gmail_query else "your query"
+        detail = (
+            f"Found {len(messages)} email(s) for {tried} but couldn't extract "
+            f"the relevant data. Try rephrasing, or use `/mail search` to see the raw emails."
         )
+        return AnalysisAnswer(answer=detail, format_hint="paragraph", source_count=0)
 
     return synthesise(all_extractions, plan.synthesis_instruction, question, cfg)
