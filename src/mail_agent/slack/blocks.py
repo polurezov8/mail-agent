@@ -2,7 +2,55 @@
 
 from __future__ import annotations
 
+import re
+
 from ..models import SurfaceResult, TriageDecision
+
+
+def _md_to_mrkdwn(text: str) -> str:
+    """Convert GitHub Markdown to Slack mrkdwn.
+
+    Handles: ### headings, **bold**, --- dividers, | tables |, [text](url).
+    """
+    lines = text.split("\n")
+    result: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # Table block: wrap consecutive | lines in a code block
+        if line.strip().startswith("|"):
+            table: list[str] = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                table.append(lines[i])
+                i += 1
+            result.append("```")
+            result.extend(table)
+            result.append("```")
+            continue
+
+        # --- divider → blank line
+        if re.match(r"^\s*-{3,}\s*$", line):
+            i += 1
+            continue
+
+        # ### Heading → *Heading*
+        m = re.match(r"^#{1,6}\s+(.+)$", line)
+        if m:
+            result.append(f"*{m.group(1).strip()}*")
+            i += 1
+            continue
+
+        # **bold** → *bold*  (must run before bare *italic*)
+        line = re.sub(r"\*\*(.+?)\*\*", r"*\1*", line)
+
+        # [text](url) → <url|text>
+        line = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"<\2|\1>", line)
+
+        result.append(line)
+        i += 1
+
+    return "\n".join(result)
 
 Block = dict
 
@@ -558,7 +606,8 @@ def ask_result_blocks(question: str, answer) -> list[Block]:
     ]
 
     # Slack section blocks cap at 3 000 chars — split answer if needed
-    text = f"*{answer.answer}*" if answer.format_hint == "number" else answer.answer
+    raw = f"*{answer.answer}*" if answer.format_hint == "number" else answer.answer
+    text = _md_to_mrkdwn(raw)
     chunk_size = 2_900
     for i in range(0, max(1, len(text)), chunk_size):
         blocks.append(
