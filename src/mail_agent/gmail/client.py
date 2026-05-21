@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import html
 import os
 from datetime import datetime, timezone
@@ -10,6 +11,8 @@ from googleapiclient.discovery import build
 from ..models import AccountName, EmailMessage, MessageId, ThreadId, ThreadMessage
 from .accounts import Account
 from .auth import get_credentials
+
+_BODY_TRUNCATE = 8_000
 
 
 def _service(account: Account):
@@ -43,6 +46,48 @@ def _parse_message(account: AccountName, raw: dict) -> EmailMessage:
         headers=headers,
         received_at=received_at,
     )
+
+
+def _extract_text_from_payload(payload: dict) -> str:
+    """Recursively walk MIME parts, return text/plain (or text/html fallback)."""
+    mime = payload.get("mimeType", "")
+    body_data = payload.get("body", {}).get("data", "")
+
+    if mime == "text/plain" and body_data:
+        return base64.urlsafe_b64decode(body_data + "==").decode("utf-8", errors="replace")
+    if mime == "text/html" and body_data:
+        raw = base64.urlsafe_b64decode(body_data + "==").decode("utf-8", errors="replace")
+        return html.unescape(raw)
+
+    parts = payload.get("parts", [])
+    plain_texts: list[str] = []
+    html_texts: list[str] = []
+    for part in parts:
+        candidate = _extract_text_from_payload(part)
+        if candidate:
+            if "html" in part.get("mimeType", ""):
+                html_texts.append(candidate)
+            else:
+                plain_texts.append(candidate)
+
+    if plain_texts:
+        return "\n".join(plain_texts)
+    if html_texts:
+        return "\n".join(html_texts)
+    return ""
+
+
+def fetch_message_body(account: Account, message_id: MessageId) -> str:
+    """Fetch full body of a single message. Returns plain text, truncated at 8 000 chars."""
+    svc = _service(account)
+    raw = (
+        svc.users()
+        .messages()
+        .get(userId="me", id=message_id, format="full")
+        .execute()
+    )
+    text = _extract_text_from_payload(raw.get("payload", {}))
+    return text[:_BODY_TRUNCATE]
 
 
 def search_messages(

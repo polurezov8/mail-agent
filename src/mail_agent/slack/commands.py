@@ -23,7 +23,7 @@ Respond = Callable[..., Any]
 
 HELP_TEXT = (
     "*`/mail` — Gmail triage agent*\n"
-    "Tip: in DM, type any free text — anything not matching a command runs as search.\n"
+    "Tip: in DM, type any question about your inbox — e.g. _subscriptions from Apple last 3 months_.\n"
     "\n"
     "*🚀 Run*\n"
     "• `/mail` — triage now (async)\n"
@@ -286,6 +286,40 @@ def handle_search(respond: Respond, nl_query: str) -> None:
     ).start()
 
 
+def _run_ask_background(respond: Respond, question: str) -> None:
+    try:
+        from ..analyst import analyse_inbox
+        from ..config import load_config
+        from .blocks import ask_result_blocks
+        from .client import get_channel_id, get_client, is_configured
+
+        cfg = load_config("config/rules.yaml")
+        answer = analyse_inbox(question, cfg.llm)
+
+        if not is_configured():
+            respond(text=":warning: Slack not configured.", response_type="ephemeral")
+            return
+        client = get_client()
+        channel = get_channel_id()
+        client.chat_postMessage(
+            channel=channel,
+            blocks=ask_result_blocks(question, answer),
+            text=f"Inbox answer · {question[:80]}",
+            unfurl_links=False,
+            unfurl_media=False,
+        )
+        respond(text="✅ Done.", response_type="ephemeral")
+    except Exception as exc:
+        respond(text=f":warning: Analysis failed: `{exc}`", response_type="ephemeral")
+
+
+def handle_ask(respond: Respond, question: str) -> None:
+    respond(text=f"🔎 Analysing your inbox for: _{question}_…", response_type="ephemeral")
+    threading.Thread(
+        target=_run_ask_background, args=(respond, question), daemon=True
+    ).start()
+
+
 def handle_stats(respond: Respond, period: str) -> None:
     from ..store.stats import compute_metrics
     from .blocks import stats_blocks
@@ -377,9 +411,9 @@ def dispatch(text: str, respond: Respond, fallback_to_search: bool = False) -> N
     """Parse `text` and route to a subcommand.
 
     Used both by `/mail` (slash) and by DM messages (free-text in a bot DM).
-    For DMs, `fallback_to_search=True` makes any unknown command be treated
-    as a natural-language search query — so `find that contract from acme`
-    works without needing to type `search` first.
+    For DMs, `fallback_to_search=True` makes any unknown text route to
+    handle_ask — so "subscriptions from Apple last 3 months" works without
+    needing a slash command prefix.
     """
     parts = text.strip().split()
     if not parts:
@@ -473,7 +507,7 @@ def dispatch(text: str, respond: Respond, fallback_to_search: bool = False) -> N
         handle_help(respond)
     else:
         if fallback_to_search:
-            handle_search(respond, text.strip())
+            handle_ask(respond, text.strip())
         else:
             respond(
                 text=f":grey_question: Unknown subcommand `{sub}`. Try `/mail help`.",
