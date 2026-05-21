@@ -41,11 +41,16 @@ def _md_to_mrkdwn(text: str) -> str:
             i += 1
             continue
 
-        # **bold** → *bold*  (must run before bare *italic*)
-        line = re.sub(r"\*\*(.+?)\*\*", r"*\1*", line)
+        # Normalize ** → * so **text** and **text* (mismatched) both become *text*
+        line = line.replace("**", "*")
 
         # [text](url) → <url|text>
         line = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"<\2|\1>", line)
+
+        # Strip orphan trailing * (LLM sometimes wraps whole answer in *…*)
+        # Only strip when star count is odd (unbalanced), meaning it's a dangling closer
+        if line.count("*") % 2 == 1 and line.rstrip().endswith("*"):
+            line = line.rstrip()[:-1].rstrip()
 
         result.append(line)
         i += 1
