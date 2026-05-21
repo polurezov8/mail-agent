@@ -17,6 +17,10 @@ def dispatch(results: list[TriageResult]) -> DispatchSummary:
                   already persisted, so if we don't surface them here they
                   are effectively lost from the user's view.
     """
+    from ..gmail.accounts import load_accounts
+
+    show_account = len(load_accounts()) > 1
+
     surface = [r for r in results if isinstance(r, SurfaceResult)]
     realtime = [r for r in surface if r.decision.bucket == Bucket.RESPOND]
     digest = [r for r in surface if r.decision.bucket == Bucket.NOTIFY]
@@ -40,7 +44,7 @@ def dispatch(results: list[TriageResult]) -> DispatchSummary:
     for r in realtime:
         client.chat_postMessage(
             channel=channel,
-            blocks=respond_blocks(r),
+            blocks=respond_blocks(r, show_account=show_account),
             text=f"Mail needs response: {r.email.subject}",
             unfurl_links=False,
             unfurl_media=False,
@@ -51,7 +55,7 @@ def dispatch(results: list[TriageResult]) -> DispatchSummary:
     for chunk in split_digest(digest):
         client.chat_postMessage(
             channel=channel,
-            blocks=digest_blocks(chunk),
+            blocks=digest_blocks(chunk, show_account=show_account),
             text=f"Mail digest · {len(chunk)} item(s)",
             unfurl_links=False,
             unfurl_media=False,
@@ -61,7 +65,7 @@ def dispatch(results: list[TriageResult]) -> DispatchSummary:
     for chunk in split_digest(uncertain):
         client.chat_postMessage(
             channel=channel,
-            blocks=uncertain_ignore_blocks(chunk),
+            blocks=uncertain_ignore_blocks(chunk, show_account=show_account),
             text=f"Uncertain auto-marks · {len(chunk)} item(s)",
             unfurl_links=False,
             unfurl_media=False,

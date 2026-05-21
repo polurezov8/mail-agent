@@ -110,7 +110,10 @@ _PERIOD_HOURS = {
 }
 
 
-def compute_metrics(period: str = "week") -> MetricsSnapshot:
+def compute_metrics(
+    period: str = "week",
+    accounts: list[str] | None = None,
+) -> MetricsSnapshot:
     if period not in _PERIOD_HOURS:
         period = "week"
     hours = _PERIOD_HOURS[period]
@@ -134,8 +137,30 @@ def compute_metrics(period: str = "week") -> MetricsSnapshot:
             top_senders_auto_marked=[],
         )
 
-    where = "WHERE processed_at >= ?" if since_iso else ""
-    args = (since_iso,) if since_iso else ()
+    # Build WHERE clause for processed_messages (time + optional account filter)
+    pm_conds: list[str] = []
+    pm_args: list = []
+    if since_iso:
+        pm_conds.append("processed_at >= ?")
+        pm_args.append(since_iso)
+    if accounts:
+        ph = ",".join("?" * len(accounts))
+        pm_conds.append(f"account IN ({ph})")
+        pm_args.extend(accounts)
+    where = ("WHERE " + " AND ".join(pm_conds)) if pm_conds else ""
+    args = tuple(pm_args)
+
+    # Separate time-only args for corrections (cross-account by sender design)
+    base_args = (since_iso,) if since_iso else ()
+
+    # Account filter fragment for mark_read_audit (also has account column)
+    if accounts:
+        _ph = ",".join("?" * len(accounts))
+        mr_acct_clause = f" AND account IN ({_ph})"
+        mr_acct_args = tuple(accounts)
+    else:
+        mr_acct_clause = ""
+        mr_acct_args = ()
 
     with _conn() as conn:
         # Totals + buckets
@@ -164,17 +189,17 @@ def compute_metrics(period: str = "week") -> MetricsSnapshot:
         rule_top = [TopRule(name=n, count=c) for n, c in rule_rows]
 
         # Marked read
-        mr_where = "WHERE dry_run = 0" + (" AND marked_at >= ?" if since_iso else "")
+        mr_where = "WHERE dry_run = 0" + (" AND marked_at >= ?" if since_iso else "") + mr_acct_clause
         marked_read = conn.execute(
             f"SELECT COUNT(*) FROM mark_read_audit {mr_where}",
-            args,
+            base_args + mr_acct_args,
         ).fetchone()[0]
 
-        # Corrections
+        # Corrections — cross-account by sender, intentionally not scoped
         corr_where = "WHERE corrected_at >= ?" if since_iso else ""
         corrections = conn.execute(
             f"SELECT COUNT(*) FROM corrections {corr_where}",
-            args,
+            base_args,
         ).fetchone()[0]
 
         # Uncertain band
@@ -182,10 +207,11 @@ def compute_metrics(period: str = "week") -> MetricsSnapshot:
             "WHERE dry_run = 0 AND source LIKE 'llm%' "
             "AND confidence >= 0.85 AND confidence < 0.95 AND reviewed_at IS NULL"
             + (" AND marked_at >= ?" if since_iso else "")
+            + mr_acct_clause
         )
         uncertain_band = conn.execute(
             f"SELECT COUNT(*) FROM mark_read_audit {unc_where}",
-            args,
+            base_args + mr_acct_args,
         ).fetchone()[0]
 
         # Daily activity (last N days where N = period length, or last 30 for "all")
@@ -195,20 +221,23 @@ def compute_metrics(period: str = "week") -> MetricsSnapshot:
         ).isoformat()
         daily_rows = conn.execute(
             "SELECT substr(processed_at, 1, 10) AS day, COUNT(*) "
-            "FROM processed_messages WHERE processed_at >= ? "
-            "GROUP BY day ORDER BY day",
-            (cutoff_iso,),
+            "FROM processed_messages WHERE processed_at >= ?"
+            + (f" AND account IN ({','.join('?' * len(accounts))})" if accounts else "")
+            + " GROUP BY day ORDER BY day",
+            (cutoff_iso, *(accounts or ())),
         ).fetchall()
         daily = [DailyCount(date=d, total=c) for d, c in daily_rows]
 
         # Top auto-marked senders
-        sender_where = "WHERE dry_run = 0 AND from_email IS NOT NULL AND from_email != ''" + (
-            " AND marked_at >= ?" if since_iso else ""
+        sender_where = (
+            "WHERE dry_run = 0 AND from_email IS NOT NULL AND from_email != ''"
+            + (" AND marked_at >= ?" if since_iso else "")
+            + mr_acct_clause
         )
         sender_rows = conn.execute(
             f"SELECT from_email, COUNT(*) FROM mark_read_audit {sender_where} "
             f"GROUP BY from_email ORDER BY COUNT(*) DESC LIMIT 5",
-            args,
+            base_args + mr_acct_args,
         ).fetchall()
         top_senders = [TopSender(from_email=e, count=c) for e, c in sender_rows]
 

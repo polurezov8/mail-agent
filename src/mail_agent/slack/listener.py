@@ -73,13 +73,20 @@ def _build_app() -> App:
                 return
             mark_read(account, [MessageId(message_id)])
 
-            # Replace the action's buttons with a confirmation.
+            # Replace only the clicked row's actions block with a confirmation.
+            # Using block_id scopes the replacement to the one clicked row so
+            # other rows in the same digest message keep their buttons.
+            clicked_block_id = body["actions"][0].get("block_id")
             channel = body["channel"]["id"]
             ts = body["message"]["ts"]
             blocks = body["message"]["blocks"]
             updated_blocks = []
             for block in blocks:
-                if block.get("type") == "actions":
+                is_clicked_actions = (
+                    block.get("type") == "actions"
+                    and block.get("block_id") == clicked_block_id
+                )
+                if is_clicked_actions:
                     updated_blocks.append(
                         {
                             "type": "context",
@@ -98,6 +105,62 @@ def _build_app() -> App:
     @app.action("open_gmail")
     def handle_open_gmail(ack) -> None:
         ack()  # URL handled client-side; nothing to do server-side
+
+    @app.action("row_overflow")
+    def handle_row_overflow(ack, body, client, logger) -> None:
+        ack()
+        try:
+            selected = body["actions"][0]["selected_option"]["value"]
+            parts = selected.split(":", 2)
+            if len(parts) == 3:
+                account_name, message_id, original_bucket = parts
+                from_email, subject = _lookup_email_meta(account_name, message_id, logger)
+                client.views_open(
+                    trigger_id=body["trigger_id"],
+                    view=correction_modal(
+                        account=account_name,
+                        message_id=message_id,
+                        from_email=from_email,
+                        subject=subject,
+                        original_bucket=original_bucket,
+                    ),
+                )
+            else:
+                logger.warning(f"row_overflow: unhandled value: {selected!r}")
+        except Exception as exc:
+            logger.exception(f"row_overflow action failed: {exc}")
+
+    @app.action("mark_read_bulk")
+    def handle_mark_read_bulk(ack, body, client, logger) -> None:
+        ack()
+        try:
+            value = body["actions"][0]["value"]
+            accounts_map = {a.name: a for a in load_accounts()}
+            for pair in value.split(","):
+                pair = pair.strip()
+                if ":" not in pair:
+                    continue
+                account_name, message_id = pair.split(":", 1)
+                account = accounts_map.get(account_name)
+                if account:
+                    mark_read(account, [MessageId(message_id)])
+
+            clicked_block_id = body["actions"][0].get("block_id")
+            channel = body["channel"]["id"]
+            ts = body["message"]["ts"]
+            blocks = body["message"]["blocks"]
+            updated_blocks = [
+                {
+                    "type": "context",
+                    "elements": [{"type": "mrkdwn", "text": "✅ Marked as read"}],
+                }
+                if block.get("type") == "actions" and block.get("block_id") == clicked_block_id
+                else block
+                for block in blocks
+            ]
+            client.chat_update(channel=channel, ts=ts, blocks=updated_blocks, text="Mail handled")
+        except Exception as exc:
+            logger.exception(f"mark_read_bulk action failed: {exc}")
 
     @app.action("correct_bucket")
     def handle_correct_bucket(ack, body, client, logger) -> None:

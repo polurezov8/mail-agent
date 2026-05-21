@@ -31,7 +31,8 @@ def _null_console() -> Console:
 # ── Step 1: .env ──────────────────────────────────────────────────────────────
 
 def test_init_creates_env_from_example(repo_root, monkeypatch):
-    answers = iter(["sk-ant-test", "personal", "xoxb-test"])
+    # ANTHROPIC_API_KEY, then _prompt_account_names: count="1" + name="personal", then SLACK_BOT_TOKEN
+    answers = iter(["sk-ant-test", "1", "personal", "xoxb-test"])
     monkeypatch.setattr("mail_agent.init_cmd.Prompt.ask", lambda *a, **kw: next(answers))
     monkeypatch.setattr("mail_agent.init_cmd.Confirm.ask", lambda *a, **kw: True)  # continue without creds
 

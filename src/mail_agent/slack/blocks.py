@@ -76,70 +76,116 @@ def _correct_value(account: str, message_id: str, original_bucket: str) -> str:
     return f"{account}:{message_id}:{original_bucket}"
 
 
-def _source_label(decision: TriageDecision) -> str:
-    """Prefer concrete model ID when available, else source name."""
-    if decision.model:
-        return decision.model
-    return decision.source
+def _account_badge(account: str) -> dict:
+    return {
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": f"_📬 {account}_"}],
+    }
+
+
+def _friendly_source(decision: TriageDecision) -> str:
+    mapping = {
+        "header_rule": "Rule",
+        "llm_fast": "LLM",
+        "llm_smart": "LLM",
+        "user_correction": "User",
+    }
+    return mapping.get(decision.source, decision.source)
 
 
 def _decision_context(decision: TriageDecision, prefix: str = "Why") -> dict:
-    """Multi-line mrkdwn — each bullet on its own line for readability."""
+    from ..visualize import format_rule_name
+
+    rule_part = (
+        f" · Rule: {format_rule_name(decision.rule_name)}" if decision.rule_name else ""
+    )
+    src = _friendly_source(decision)
     lines = [
         f"*{prefix}:* _{decision.reasoning}_",
-        f"• Model: `{_source_label(decision)}`",
-        f"• Confidence: `{decision.confidence:.2f}`",
+        f"{src}{rule_part} · conf `{decision.confidence:.2f}`",
     ]
-    if decision.rule_name:
-        from ..visualize import format_rule_name
-
-        lines.append(f"• Rule: *{format_rule_name(decision.rule_name)}*")
     return {"type": "context", "elements": [{"type": "mrkdwn", "text": "\n".join(lines)}]}
 
 
-def respond_blocks(result: SurfaceResult) -> list[Block]:
+def _row_actions(email, original_bucket: str, *, is_respond: bool = False) -> dict:
+    """Primary button + Open + overflow(Wrong bucket). 3 elements, compact layout."""
+    if is_respond:
+        primary = {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Open in Gmail"},
+            "style": "primary",
+            "url": _gmail_url(email.thread_id),
+            "action_id": "open_gmail",
+        }
+        secondary = {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Mark read"},
+            "value": _mark_read_value(email.account, email.id),
+            "action_id": "mark_read",
+        }
+    else:
+        primary = {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Mark read"},
+            "style": "danger",
+            "value": _mark_read_value(email.account, email.id),
+            "action_id": "mark_read",
+        }
+        secondary = {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Open in Gmail"},
+            "url": _gmail_url(email.thread_id),
+            "action_id": "open_gmail",
+        }
+    return {
+        "type": "actions",
+        "elements": [
+            primary,
+            secondary,
+            {
+                "type": "overflow",
+                "action_id": "row_overflow",
+                "options": [
+                    {
+                        "text": {"type": "plain_text", "text": "Wrong bucket"},
+                        "value": _correct_value(email.account, email.id, original_bucket),
+                    },
+                ],
+            },
+        ],
+    }
+
+
+def respond_blocks(result: SurfaceResult, *, show_account: bool = False) -> list[Block]:
     """Single high-priority mail. One message per respond-bucket result."""
+    from .format import clean_snippet, clean_subject
+
     email = result.email
     decision = result.decision
     sender = f"{email.from_name} <{email.from_email}>" if email.from_name else email.from_email
-    return [
+    blocks: list[Block] = [
         {
             "type": "header",
             "text": {"type": "plain_text", "text": "🔔 Needs response"},
         },
+    ]
+    if show_account:
+        blocks.append(_account_badge(email.account))
+    blocks += [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"*{email.subject}*\n_From: {sender}_\n\n>{_truncate(email.snippet, 350)}",
+                "text": (
+                    f"*{clean_subject(email.subject)}*\n_From: {sender}_\n\n"
+                    f">{_truncate(clean_snippet(email.snippet), 350)}"
+                ),
             },
         },
         _decision_context(decision, prefix="Why respond"),
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Mark read"},
-                    "style": "danger",
-                    "value": _mark_read_value(email.account, email.id),
-                    "action_id": "mark_read",
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Open in Gmail"},
-                    "url": _gmail_url(email.thread_id),
-                    "action_id": "open_gmail",
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Wrong bucket"},
-                    "value": _correct_value(email.account, email.id, decision.bucket.value),
-                    "action_id": "correct_bucket",
-                },
-            ],
-        },
+        _row_actions(email, decision.bucket.value, is_respond=True),
     ]
+    return blocks
 
 
 def stats_blocks(snapshot) -> list[Block]:
@@ -294,7 +340,12 @@ def stats_blocks(snapshot) -> list[Block]:
 
 
 def search_results_blocks(
-    nl_query: str, gmail_query: str, results: list, reasoning: str = ""
+    nl_query: str,
+    gmail_query: str,
+    results: list,
+    reasoning: str = "",
+    *,
+    show_account: bool = False,
 ) -> list[Block]:
     """Search hits as a single Slack post."""
     blocks: list[Block] = [
@@ -337,18 +388,14 @@ def search_results_blocks(
                 },
             }
         )
+        ctx_parts = [f"`{r.received_at.strftime('%Y-%m-%d %H:%M')}`"]
+        if show_account:
+            ctx_parts.append(f"_📬 {r.account}_")
+        ctx_parts.append(f"<{_gmail_url(r.thread_id)}|Open in Gmail>")
         blocks.append(
             {
                 "type": "context",
-                "elements": [
-                    {
-                        "type": "mrkdwn",
-                        "text": (
-                            f"`{r.received_at.strftime('%Y-%m-%d %H:%M')}` · "
-                            f"<{_gmail_url(r.thread_id)}|Open in Gmail>"
-                        ),
-                    }
-                ],
+                "elements": [{"type": "mrkdwn", "text": " · ".join(ctx_parts)}],
             }
         )
     return blocks
@@ -483,7 +530,10 @@ def review_blocks(candidates: list[dict]) -> list[Block]:
         sender = c.get("from_email") or "(unknown)"
         subject = c.get("subject") or "(no subject)"
         conf = c.get("confidence", 0.0)
-        model = c.get("model") or c.get("source", "llm_fast")
+        source_key = c.get("source", "llm_fast")
+        src_label = {
+            "header_rule": "Rule", "llm_fast": "LLM", "llm_smart": "LLM", "user_correction": "User",
+        }.get(source_key, source_key)
         from ..visualize import format_rule_name as _fmt_rule
 
         rule = _fmt_rule(c.get("rule_name")) if c.get("rule_name") else "-"
@@ -497,7 +547,7 @@ def review_blocks(candidates: list[dict]) -> list[Block]:
                     "type": "mrkdwn",
                     "text": (
                         f"*{_truncate(subject, 120)}*  ·  _{sender}_\n"
-                        f"`ignore` (auto-marked) · `{model}` · conf `{conf:.2f}` · `{rule}`"
+                        f"`ignore` (auto-marked) · {src_label} · conf `{conf:.2f}` · `{rule}`"
                     ),
                 },
             }
@@ -524,46 +574,26 @@ def review_blocks(candidates: list[dict]) -> list[Block]:
     return blocks
 
 
-def _row_buttons(email, original_bucket: str) -> dict:
-    return {
-        "type": "actions",
-        "elements": [
-            {
-                "type": "button",
-                "text": {"type": "plain_text", "text": "Mark read"},
-                "value": _mark_read_value(email.account, email.id),
-                "action_id": "mark_read",
-            },
-            {
-                "type": "button",
-                "text": {"type": "plain_text", "text": "Open"},
-                "url": _gmail_url(email.thread_id),
-                "action_id": "open_gmail",
-            },
-            {
-                "type": "button",
-                "text": {"type": "plain_text", "text": "Wrong bucket"},
-                "value": _correct_value(email.account, email.id, original_bucket),
-                "action_id": "correct_bucket",
-            },
-        ],
-    }
-
-
-def _compact_row_text(email, decision) -> str:
-    """One mrkdwn blob: subject, sender, snippet, classifier meta. Used in
-    digest/review to keep each item to 2 blocks (section + actions) and stay
-    under Slack's 50-block message limit."""
+def _compact_row_text(email, decision, *, show_account: bool = False) -> str:
+    """Sender-first compact row: headline + snippet + metadata context line."""
     from ..visualize import format_rule_name
+    from .format import clean_snippet, clean_subject, relative_time
 
     sender = email.from_name or email.from_email
     rule_or_src = (
-        format_rule_name(decision.rule_name) if decision.rule_name else _source_label(decision)
+        format_rule_name(decision.rule_name) if decision.rule_name else _friendly_source(decision)
     )
+    meta_parts = []
+    if show_account:
+        meta_parts.append(f"📬 {email.account}")
+    meta_parts.append(f"🕒 {relative_time(email.received_at)}")
+    meta_parts.append(decision.bucket.value)
+    meta_parts.append(f"{rule_or_src} · conf {decision.confidence:.2f}")
+    meta_line = " · ".join(meta_parts)
     return (
-        f"*{_truncate(email.subject, 120)}*  ·  _{sender}_\n"
-        f"> {_truncate(email.snippet, 200)}\n"
-        f"`{decision.bucket.value}` · {rule_or_src} · conf `{decision.confidence:.2f}`"
+        f"*{sender}*  ·  {_truncate(clean_subject(email.subject), 60)}\n"
+        f"> {_truncate(clean_snippet(email.snippet), 100)}\n"
+        f"{meta_line}"
     )
 
 
@@ -571,24 +601,130 @@ def _compact_row_text(email, decision) -> str:
 _DIGEST_ROWS_PER_MESSAGE = 24
 
 
-def digest_blocks(results: list[SurfaceResult]) -> list[Block]:
-    """Batched notify-bucket mails. 2 blocks per row (section + actions) so
-    we fit ~24 items in one message. Caller splits long batches across
-    multiple posts via :func:`split_digest`."""
+def grouped_row_blocks(group, *, show_account: bool = False) -> list[Block]:
+    """Collapsed card for 2+ results sharing the same subject+account+bucket."""
+    from .format import clean_snippet, clean_subject, relative_time
+
+    rep = group.representative
+    email = rep.email
+    decision = rep.decision
+    n = len(group.members)
+
+    unique_senders = list(dict.fromkeys(
+        r.email.from_name or r.email.from_email for r in group.members
+    ))
+    sender_display = f"{unique_senders[0]} +{len(unique_senders) - 1}" if len(unique_senders) > 1 else unique_senders[0]
+
+    blocks: list[Block] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{sender_display}*  ·  {_truncate(clean_subject(email.subject), 60)}",
+            },
+        },
+        {
+            "type": "rich_text",
+            "elements": [
+                {
+                    "type": "rich_text_list",
+                    "style": "bullet",
+                    "elements": [
+                        {
+                            "type": "rich_text_section",
+                            "elements": [
+                                {
+                                    "type": "text",
+                                    "text": f"{r.email.from_name or r.email.from_email}: "
+                                    f"{_truncate(clean_snippet(r.email.snippet), 80)}  ",
+                                    "style": {"italic": True},
+                                },
+                                {
+                                    "type": "link",
+                                    "url": _gmail_url(r.email.thread_id),
+                                    "text": "↗",
+                                },
+                            ],
+                        }
+                        for r in group.members
+                    ],
+                }
+            ],
+        },
+    ]
+
+    meta_parts = []
+    if show_account:
+        meta_parts.append(f"📬 {email.account}")
+    meta_parts.append(f"📦 {n} similar")
+    oldest = min(r.email.received_at for r in group.members)
+    newest = max(r.email.received_at for r in group.members)
+    meta_parts.append(f"oldest {relative_time(oldest)} · newest {relative_time(newest)}")
+    meta_parts.append(f"{decision.bucket.value} · conf {decision.confidence:.2f}")
+    blocks.append({
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": " · ".join(meta_parts)}],
+    })
+
+    mark_all_value = ",".join(f"{r.email.account}:{r.email.id}" for r in group.members)
+    if len(mark_all_value) > 1900:
+        mark_all_value = f"{rep.email.account}:{rep.email.id}"
+
+    blocks.append({
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": f"Mark all read ({n})"},
+                "style": "danger",
+                "value": mark_all_value,
+                "action_id": "mark_read_bulk",
+            },
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Open latest"},
+                "url": _gmail_url(rep.email.thread_id),
+                "action_id": "open_gmail",
+            },
+            {
+                "type": "overflow",
+                "action_id": "row_overflow",
+                "options": [
+                    {
+                        "text": {"type": "plain_text", "text": "Wrong bucket"},
+                        "value": _correct_value(rep.email.account, rep.email.id, decision.bucket.value),
+                    },
+                ],
+            },
+        ],
+    })
+    return blocks
+
+
+def digest_blocks(results: list[SurfaceResult], *, show_account: bool = False) -> list[Block]:
+    """Batched notify-bucket mails. Groups ≥2 identical-subject items into one card.
+    Worst case: 24 items all in 2-item groups → 12×4 + 1 header = 49 blocks (< 50 cap)."""
+    from .format import ResultGroup, group_results
+
+    grouped = group_results(results)
     blocks: list[Block] = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"📬 Digest · {len(results)} item(s)"},
+            "text": {"type": "plain_text", "text": f"📬 Digest · {len(results)}"},
         }
     ]
-    for r in results:
-        blocks.append(
-            {
+    for item in grouped:
+        if isinstance(item, ResultGroup):
+            blocks.extend(grouped_row_blocks(item, show_account=show_account))
+        else:
+            blocks.append({
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": _compact_row_text(r.email, r.decision)},
-            }
-        )
-        blocks.append(_row_buttons(r.email, r.decision.bucket.value))
+                "text": {
+                    "type": "mrkdwn",
+                    "text": _compact_row_text(item.email, item.decision, show_account=show_account),
+                },
+            })
+            blocks.append(_row_actions(item.email, item.decision.bucket.value))
     return blocks
 
 
@@ -633,16 +769,21 @@ def ask_result_blocks(question: str, answer) -> list[Block]:
     return blocks
 
 
-def uncertain_ignore_blocks(results: list[SurfaceResult]) -> list[Block]:
+def uncertain_ignore_blocks(
+    results: list[SurfaceResult], *, show_account: bool = False
+) -> list[Block]:
     """Ignore-bucket SurfaceResults — mails the auto-mark gate refused
     (low confidence or no opt-in rule). Surfaced for human review so they
     don't silently disappear into `processed_messages`."""
+    from .format import ResultGroup, group_results
+
+    grouped = group_results(results)
     blocks: list[Block] = [
         {
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": f"⚠️ Uncertain auto-marks · {len(results)} item(s)",
+                "text": f"⚠️ Uncertain · {len(results)}",
             },
         },
         {
@@ -651,19 +792,165 @@ def uncertain_ignore_blocks(results: list[SurfaceResult]) -> list[Block]:
                 {
                     "type": "mrkdwn",
                     "text": (
-                        "_Classified `ignore` but gate held — confirm with Mark read, "
-                        "or correct via Wrong bucket._"
+                        "_Auto-archive blocked by confidence floor. "
+                        "Confirm with Mark read, or fix via Wrong bucket._"
                     ),
                 }
             ],
         },
     ]
-    for r in results:
+    for item in grouped:
+        if isinstance(item, ResultGroup):
+            blocks.extend(grouped_row_blocks(item, show_account=show_account))
+        else:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": _compact_row_text(item.email, item.decision, show_account=show_account),
+                },
+            })
+            blocks.append(_row_actions(item.email, item.decision.bucket.value))
+    return blocks
+
+
+_AUDIT_SOURCE_LABELS = {
+    "header_rule": "Rule",
+    "llm_fast": "LLM",
+    "llm_smart": "LLM",
+    "user_correction": "User",
+}
+
+
+def _audit_sender_display(from_email: str) -> str:
+    """Best-effort human name from an email's local part.
+
+    `olesia.pshenychna@makeheadway.com` → `Olesia Pshenychna`.
+    Plus-tags and digits are stripped. Falls back to the raw email if nothing
+    usable remains.
+    """
+    if not from_email:
+        return "(unknown)"
+    local = from_email.split("@", 1)[0]
+    local = local.split("+", 1)[0]
+    cleaned = re.sub(r"[._\-]+", " ", local).strip()
+    parts = [p for p in cleaned.split() if not p.isdigit()]
+    if not parts:
+        return from_email
+    return " ".join(p.capitalize() for p in parts)
+
+
+_RECENT_COL_TIME = 9
+_RECENT_COL_SENDER = 18
+_RECENT_COL_SUBJECT = 34
+_RECENT_COL_SOURCE = 14
+
+
+def _pad_col(s: str, width: int) -> str:
+    """Truncate-with-ellipsis to width then left-pad spaces. ASCII columns only."""
+    if len(s) > width:
+        s = s[: max(0, width - 1)] + "…"
+    return s.ljust(width)
+
+
+def _audit_source_label(entry) -> str:
+    """Source column text. Prefer the formatted rule name when a header rule
+    matched (more informative than the generic 'Rule'); otherwise the friendly
+    source label."""
+    if entry.source == "header_rule" and entry.rule_name:
+        from ..visualize import format_rule_name
+
+        return format_rule_name(entry.rule_name)
+    return _AUDIT_SOURCE_LABELS.get(entry.source, entry.source or "—")
+
+
+def recent_blocks(entries) -> list[Block]:
+    """Audit log for the last N mark-read actions, rendered as a monospace
+    table inside a `rich_text_preformatted` block.
+
+    Visible cap of 24 rows keeps the message under Slack's 50-block limit and
+    keeps the table itself under the per-block character limit.
+    """
+    from datetime import datetime
+
+    from .format import clean_subject, relative_time
+
+    visible = list(entries)[:24]
+    n = len(visible)
+    blocks: list[Block] = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"🧹 Mark-read · last {n}"},
+        }
+    ]
+    if not visible:
+        return blocks
+
+    lines = [
+        "  ".join(
+            (
+                _pad_col("Time", _RECENT_COL_TIME),
+                _pad_col("Sender", _RECENT_COL_SENDER),
+                _pad_col("Subject", _RECENT_COL_SUBJECT),
+                _pad_col("Source", _RECENT_COL_SOURCE),
+                "Conf",
+            )
+        )
+    ]
+
+    for e in visible:
+        sender = _audit_sender_display(e.from_email)
+        subject = clean_subject(e.subject) if e.subject else "(no subject)"
+
+        try:
+            dt = datetime.fromisoformat(e.marked_at)
+            time_str = relative_time(dt)
+        except (ValueError, TypeError):
+            time_str = e.marked_at or "—"
+
+        src = _audit_source_label(e)
+        if e.dry_run:
+            src = f"{src}*"  # trailing * marks dry-run rows
+
+        lines.append(
+            "  ".join(
+                (
+                    _pad_col(time_str, _RECENT_COL_TIME),
+                    _pad_col(sender, _RECENT_COL_SENDER),
+                    _pad_col(subject, _RECENT_COL_SUBJECT),
+                    _pad_col(src, _RECENT_COL_SOURCE),
+                    f"{e.confidence:.2f}",
+                )
+            )
+        )
+
+    table_text = "\n".join(lines)
+    blocks.append(
+        {
+            "type": "rich_text",
+            "elements": [
+                {
+                    "type": "rich_text_preformatted",
+                    "elements": [{"type": "text", "text": table_text}],
+                }
+            ],
+        }
+    )
+
+    has_dry = any(e.dry_run for e in visible)
+    footer_parts: list[str] = []
+    if has_dry:
+        footer_parts.append("_`*` = dry-run._")
+    if len(entries) > 24:
+        footer_parts.append(
+            f"_…and {len(entries) - 24} more (raise the limit to see them)._"
+        )
+    if footer_parts:
         blocks.append(
             {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": _compact_row_text(r.email, r.decision)},
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": "  ".join(footer_parts)}],
             }
         )
-        blocks.append(_row_buttons(r.email, r.decision.bucket.value))
+
     return blocks

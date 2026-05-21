@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -34,6 +35,40 @@ def _render_doctor_checks(checks: list, console: Console) -> int:
         f"[red]{counts['fail']} fail[/red]"
     )
     return counts["fail"]
+
+
+_ACCOUNT_NAME_RE = re.compile(r"^[a-z0-9_-]+$")
+_ACCOUNT_DEFAULTS = ["personal", "work", "side", "archive"]
+
+
+def _prompt_account_names(console: Console) -> str:
+    """Ask how many Gmail accounts and collect a valid name for each."""
+    raw_n = Prompt.ask("  How many Gmail accounts?", default="1")
+    try:
+        count = max(1, int(raw_n))
+    except ValueError:
+        count = 1
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for i in range(count):
+        default = _ACCOUNT_DEFAULTS[i] if i < len(_ACCOUNT_DEFAULTS) else f"account{i + 1}"
+        while True:
+            name = Prompt.ask(f"  Account {i + 1} name", default=default).strip().lower()
+            if not _ACCOUNT_NAME_RE.match(name):
+                console.print(
+                    "  [yellow]Use only lowercase letters, digits, hyphens, or underscores.[/yellow]"
+                )
+                continue
+            if name in seen:
+                console.print("  [yellow]Duplicate name — choose a different one.[/yellow]")
+                continue
+            seen.add(name)
+            names.append(name)
+            console.print(f"  [dim]Creds expected at: creds/{name}_credentials.json[/dim]")
+            break
+
+    return ",".join(names)
 
 
 def _step_env(
@@ -68,11 +103,15 @@ def _step_env(
         key, rest = line.split("=", 1)
         key = key.strip()
         default = rest.split("#")[0].strip()
-        value = Prompt.ask(
-            f"  [bold]{key}[/bold]",
-            default=default,
-            password=key in _SECRET_KEYS,
-        )
+
+        if key == "GMAIL_ACCOUNTS":
+            value = _prompt_account_names(console)
+        else:
+            value = Prompt.ask(
+                f"  [bold]{key}[/bold]",
+                default=default,
+                password=key in _SECRET_KEYS,
+            )
         out_lines.append(f"{key}={value}")
 
     content = "\n".join(out_lines) + "\n"

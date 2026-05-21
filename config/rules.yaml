@@ -55,6 +55,21 @@ rules:
     - x.com
   bucket: ignore
   auto_mark_read: true
+- name: jira_notifications
+  description: Jira ticket updates, comments, mentions
+  match:
+    from_domain:
+    - atlassian.net
+    - atlassian.com
+  bucket: ignore
+  auto_mark_read: true
+- name: gemini_notes
+  description: Gemini AI meeting notes summaries
+  match:
+    from_email:
+    - gemini-notes@google.com
+  bucket: ignore
+  auto_mark_read: true
 - name: newsletters
   description: Generic newsletters (any mail with List-Unsubscribe header)
   match:
@@ -78,6 +93,11 @@ llm:
   - Calendar CANCELLATION (subject starts with 'Canceled:' or 'Cancelled:') of a 1:1
     meeting (only you + one other person) → respond. Group meeting cancellation →
     ignore + auto-mark.
+  - Calendar DECLINE notification (subject starts with 'Declined:') from a colleague
+    for a 1:1 meeting → respond (the meeting is effectively off, you need to know).
+    Decline on a group meeting where you are the organizer and all required attendees
+    declined → respond. Decline on a group meeting where only some attendees declined
+    → ignore + auto-mark.
   - Security alerts from Google Account, Apple ID, banks, payment providers (Stripe,
     PayPal, etc.), 2FA providers → respond. These are time-sensitive.
   - Mail from a real human directly asking you a question (not automated, not a newsletter,

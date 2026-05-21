@@ -69,6 +69,19 @@ class TriageDecision(BaseModel):
         default=None,
         description="Concrete model ID when source is llm_*; None otherwise.",
     )
+    auto_mark: bool = Field(
+        default=False,
+        description=(
+            "Opt-in for silent archive. Set true when bucket is ignore AND the "
+            "mail is clearly low-signal noise the user would never want to read: "
+            "automated notifications, newsletters, calendar invites/declines for "
+            "group meetings, order confirmations, recruiter outreach, promo "
+            "offers, vendor changelogs, or anything the user's natural-language "
+            "rules say to '+ auto-mark'. Set false for any non-ignore bucket, "
+            "for ignore decisions where you are uncertain, or where the mail "
+            "could plausibly need the user's eyes."
+        ),
+    )
 
 
 class AutoMarkResult(BaseModel):

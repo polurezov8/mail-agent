@@ -96,6 +96,7 @@ def decision_factory():
             confidence=1.0,
             source="header_rule",
             model=None,
+            auto_mark=True,
         )
         base.update(overrides)
         return TriageDecision(**base)

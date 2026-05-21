@@ -17,3 +17,4 @@ class GraphState(TypedDict, total=False):
     dry_run: bool
     no_slack: bool
     slack_summary: dict
+    accounts: list[str] | None  # if set, only process accounts with these names

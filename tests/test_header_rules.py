@@ -22,6 +22,22 @@ def test_from_domain_match_returns_rule_decision(sample_email):
     assert decision.rule_name == "github"
     assert decision.confidence == 1.0
     assert decision.source == "header_rule"
+    assert decision.auto_mark is True
+
+
+def test_rule_without_auto_mark_opt_in_propagates_false(sample_email):
+    rules = [
+        Rule(
+            name="linear",
+            description="L",
+            match=RuleMatch(from_domain=["linear.app"]),
+            bucket=Bucket.NOTIFY,
+            auto_mark_read=False,
+        )
+    ]
+    decision = match_first(sample_email(from_email="bot@linear.app"), rules)
+    assert decision is not None
+    assert decision.auto_mark is False
 
 
 def test_no_match_returns_none(sample_email):

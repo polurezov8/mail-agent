@@ -16,6 +16,23 @@ def _root() -> None:
     """Personal Gmail triage agent."""
 
 
+def _resolve_accounts(filter_names: list[str] | None) -> list[str] | None:
+    """Validate account names against configured accounts. Returns None (all) or the filtered list."""
+    if not filter_names:
+        return None
+    from .gmail.accounts import load_accounts
+
+    known = {a.name for a in load_accounts()}
+    unknown = [n for n in filter_names if n not in known]
+    if unknown:
+        console.print(
+            f"[red]Unknown account(s): {', '.join(unknown)}. "
+            f"Configured: {', '.join(sorted(known)) or '(none)'}[/red]"
+        )
+        raise typer.Exit(code=1)
+    return filter_names
+
+
 @app.command()
 def triage(
     mock: bool = typer.Option(False, "--mock", help="Use hardcoded mock inbox instead of Gmail."),
@@ -31,6 +48,9 @@ def triage(
         False, "--dry-run", help="Show would-mark-read decisions without modifying Gmail."
     ),
     no_slack: bool = typer.Option(False, "--no-slack", help="Skip Slack delivery for this run."),
+    account: list[str] | None = typer.Option(
+        None, "--account", help="Limit to specific account(s). Repeatable: --account work."
+    ),
 ) -> None:
     """Run one triage pass."""
     load_dotenv()
@@ -45,6 +65,7 @@ def triage(
             "skip_processed": not reprocess,
             "dry_run": dry_run,
             "no_slack": no_slack,
+            "accounts": _resolve_accounts(account),
         }
     )
 
@@ -93,6 +114,9 @@ def search(
     post_to_slack: bool = typer.Option(
         False, "--post-to-slack", help="Also post results to your Slack DM."
     ),
+    account: list[str] | None = typer.Option(
+        None, "--account", help="Limit to specific account(s). Repeatable."
+    ),
 ) -> None:
     """NL search across your authorized Gmail accounts (read-only)."""
     load_dotenv()
@@ -116,8 +140,11 @@ def search(
     if plan.suggested_limit:
         console.print(f"[dim]Limit:[/dim] {plan.suggested_limit} (from your query)")
 
+    account_filter = _resolve_accounts(account)
     hits = []
     for acct in load_accounts():
+        if account_filter is not None and acct.name not in account_filter:
+            continue
         if acct.is_authorized:
             hits.extend(search_messages(acct, plan.gmail_query, limit=effective_limit))
     hits.sort(key=lambda m: m.received_at, reverse=True)
@@ -265,6 +292,9 @@ def stats(
     post_to_slack: bool = typer.Option(
         False, "--post-to-slack", help="Also post to your Slack DM."
     ),
+    account: list[str] | None = typer.Option(
+        None, "--account", help="Limit to specific account(s). Repeatable."
+    ),
 ) -> None:
     """Show triage metrics: counts, top rules, top senders, daily activity."""
     load_dotenv()
@@ -276,7 +306,7 @@ def stats(
     from .store.stats import compute_metrics
     from .visualize import hbar, percent, sparkline
 
-    s = compute_metrics(period=period)
+    s = compute_metrics(period=period, accounts=_resolve_accounts(account))
     period_label = {
         "day": "24 hours",
         "week": "7 days",
@@ -368,6 +398,9 @@ def brief(
     post_to_slack: bool = typer.Option(
         False, "--post-to-slack", help="Also post to your Slack DM."
     ),
+    account: list[str] | None = typer.Option(
+        None, "--account", help="Limit to specific account(s). Repeatable."
+    ),
 ) -> None:
     """Print (and optionally post) a daily activity Brief."""
     load_dotenv()
@@ -375,7 +408,7 @@ def brief(
 
     from .brief import build_brief
 
-    summary = build_brief(hours=hours)
+    summary = build_brief(hours=hours, accounts=_resolve_accounts(account))
     bucket_line = " · ".join(
         f"{b}: {summary.bucket_counts.get(b, 0)}" for b in ("ignore", "notify", "respond")
     )

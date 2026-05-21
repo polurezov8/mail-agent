@@ -29,15 +29,21 @@ from .state import GraphState
 def _gate(
     email: EmailMessage,
     decision: TriageDecision,
-    auto_mark_lookup: dict[str, bool],
     min_confidence: float,
 ) -> TriageResult:
     """Single point where the auto-mark gate is enforced. If all conditions
-    pass → AutoMarkResult (can be marked). Otherwise → SurfaceResult."""
-    rule_opts_in = decision.rule_name is not None and auto_mark_lookup.get(
-        decision.rule_name, False
-    )
-    if decision.bucket == Bucket.IGNORE and rule_opts_in and decision.confidence >= min_confidence:
+    pass → AutoMarkResult (can be marked). Otherwise → SurfaceResult.
+
+    Three gates: bucket=ignore, classifier opted in (decision.auto_mark),
+    and confidence ≥ floor. The opt-in comes from the rule's auto_mark_read
+    flag (header path), the LLM's auto_mark output (LLM path), or the
+    user's explicit override (user_correction path).
+    """
+    if (
+        decision.bucket == Bucket.IGNORE
+        and decision.auto_mark
+        and decision.confidence >= min_confidence
+    ):
         return AutoMarkResult(email=email, decision=decision)
     return SurfaceResult(email=email, decision=decision)
 
@@ -54,6 +60,9 @@ def node_fetch(state: GraphState) -> GraphState:
 
     init_db()
     accounts = load_accounts()
+    account_filter = state.get("accounts")
+    if account_filter:
+        accounts = [a for a in accounts if a.name in account_filter]
     if not accounts:
         return {"inbox": []}
 
@@ -80,7 +89,6 @@ def node_fetch(state: GraphState) -> GraphState:
 
 def node_triage(state: GraphState) -> GraphState:
     cfg = state["config"]
-    auto_mark_lookup = {r.name: r.auto_mark_read for r in cfg.rules}
     min_conf = cfg.llm.auto_mark_min_confidence
     mock = bool(state.get("mock", False))
 
@@ -91,12 +99,14 @@ def node_triage(state: GraphState) -> GraphState:
         # Stage 0: user corrections override everything.
         override = sender_override(email.from_email)
         if override:
+            override_bucket = Bucket(override)
             decision = TriageDecision(
-                bucket=Bucket(override),
+                bucket=override_bucket,
                 rule_name=None,
                 reasoning=f"Sender-level user correction → {override}.",
                 confidence=1.0,
                 source="user_correction",
+                auto_mark=override_bucket == Bucket.IGNORE,
             )
         else:
             decision = match_first(email, cfg.rules)
@@ -112,7 +122,7 @@ def node_triage(state: GraphState) -> GraphState:
                         confidence=0.0,
                         source="header_rule",
                     )
-        results.append(_gate(email, decision, auto_mark_lookup, min_conf))
+        results.append(_gate(email, decision, min_conf))
     return {"results": results}
 
 

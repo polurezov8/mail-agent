@@ -32,5 +32,6 @@ def match_first(email: EmailMessage, rules: list[Rule]) -> TriageDecision | None
                 reasoning=f"Matched header rule '{rule.name}': {rule.description}",
                 confidence=1.0,
                 source="header_rule",
+                auto_mark=rule.auto_mark_read,
             )
     return None

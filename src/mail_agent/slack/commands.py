@@ -26,7 +26,7 @@ HELP_TEXT = (
     "Tip: in DM, type any question about your inbox — e.g. _subscriptions from Apple last 3 months_.\n"
     "\n"
     "*🚀 Run*\n"
-    "• `/mail` — triage now (async)\n"
+    "• `/mail` — triage all unread now (async)\n"
     "• `/mail search <natural-language>` — find mail by NL query\n"
     "\n"
     "*📊 Inspect*\n"
@@ -99,30 +99,29 @@ def handle_recent(respond: Respond, limit: int) -> None:
     if not entries:
         respond(text="_No mark-read entries yet._", response_type="ephemeral")
         return
-    from ..visualize import format_rule_name
+    from .blocks import recent_blocks
 
-    lines = [f"*Recent {len(entries)} mark-read entries*"]
-    for e in entries:
-        tag = " (dry-run)" if e.dry_run else ""
-        rule = format_rule_name(e.rule_name) if e.rule_name else e.source
-        lines.append(
-            f"• {_format_relative(e.marked_at)}{tag} — _{e.from_email}_ "
-            f"· *{e.subject[:80]}* · _{rule}_ (conf {e.confidence:.2f})"
-        )
-    respond(text="\n".join(lines), response_type="ephemeral")
+    respond(
+        text=f"Mark-read · last {min(len(entries), 24)}",
+        blocks=recent_blocks(entries),
+        response_type="ephemeral",
+    )
 
 
 def _run_triage_background(respond: Respond) -> None:
+    """User-initiated triage: always re-classifies every unread mail.
+
+    Scheduled CLI runs use skip_processed=True to avoid noisy duplicates.
+    A manual /mail click means the user wants to see their inbox state now,
+    regardless of what was surfaced in a previous run.
+    """
     try:
         cfg = load_config("config/rules.yaml")
         graph = build_graph()
-        # Run real Slack dispatch — slash triage is a user-initiated run that
-        # should still post respond/notify cards to the DM. The ephemeral
-        # summary returned at the end is additive, not a replacement.
         state = graph.invoke(
             {
                 "config": cfg,
-                "skip_processed": True,
+                "skip_processed": False,
             }
         )
         results = state.get("results", [])
@@ -245,6 +244,8 @@ def _run_search_background(respond: Respond, nl_query: str) -> None:
             respond(text=":warning: No authorized Gmail accounts.", response_type="ephemeral")
             return
 
+        show_account = len(accounts) > 1
+
         # (50 Slack block limit − 2 header/context) / 3 per result = 16 max
         _SEARCH_DISPLAY_LIMIT = 16
         effective_limit = min(plan.suggested_limit or 10, _SEARCH_DISPLAY_LIMIT)
@@ -268,7 +269,9 @@ def _run_search_background(respond: Respond, nl_query: str) -> None:
         channel = get_channel_id()
         client.chat_postMessage(
             channel=channel,
-            blocks=search_results_blocks(nl_query, plan.gmail_query, top, plan.reasoning),
+            blocks=search_results_blocks(
+                nl_query, plan.gmail_query, top, plan.reasoning, show_account=show_account
+            ),
             text=f"Search · {nl_query[:80]}",
             unfurl_links=False,
             unfurl_media=False,
