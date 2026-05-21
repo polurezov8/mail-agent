@@ -678,7 +678,7 @@ app.add_typer(schedule_app, name="schedule")
 def schedule_install(
     poll_minutes: int = typer.Option(30, "--poll-minutes", help="Interval between triage runs."),
     daily_hour: int = typer.Option(
-        9, "--daily-hour", help="Hour (0-23, local) for the daily catch-all run."
+        10, "--daily-hour", help="Hour (0-23, local) for the daily catch-all run."
     ),
     daily_minute: int = typer.Option(0, "--daily-minute", help="Minute (0-59) for the daily run."),
     no_listener: bool = typer.Option(

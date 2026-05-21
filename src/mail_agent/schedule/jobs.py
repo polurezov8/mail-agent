@@ -16,7 +16,7 @@ def default_jobs(
     project_root: Path,
     uv_bin: Path,
     poll_interval_seconds: int = 1800,
-    daily_hour: int = 9,
+    daily_hour: int = 10,
     daily_minute: int = 0,
     include_listener: bool = True,
 ) -> list[JobSpec]:
