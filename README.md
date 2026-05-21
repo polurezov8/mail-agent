@@ -5,7 +5,7 @@
 Built for zero-inbox practitioners who don't want to ship their reading habits to a third-party SaaS.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://docs.python.org/3/)
-[![Tests](https://img.shields.io/badge/tests-145%20passing-brightgreen.svg)](#-tests)
+[![Tests](https://img.shields.io/badge/tests-158%20passing-brightgreen.svg)](#-tests)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-yes-success.svg)](#)
 
 ---
@@ -40,6 +40,8 @@ Runs unattended via `launchd` (macOS) or `systemd` (Linux). Costs about a dollar
 | 🧱 Type-driven design | Discriminated unions and `NewType` IDs make illegal states unrepresentable (e.g. only `AutoMarkResult` can reach Gmail's modify API). |
 | ⏰ Cross-platform scheduler | One scheduler abstraction; `launchd` and `systemd` implementations. `mail-agent schedule install` / `status` / `restart` / `uninstall`. |
 | 🩺 Doctor | `mail-agent doctor` runs end-to-end health checks: env vars, file perms, token expiry, Slack auth, DB writable, schedule state. |
+| 🔎 Inbox analyst | DM the bot any question — _"how much did I spend on subscriptions last 3 months?"_ — fetches full email bodies, extracts structured data in batches, synthesises a Slack-formatted answer. |
+| 🚀 One-shot init | `mail-agent init` walks through `.env`, creds permissions, Gmail OAuth, Slack ping, and doctor in one idempotent wizard. |
 
 ---
 
@@ -87,7 +89,7 @@ uv run mail-agent schedule install
 /mail                       run triage now (async)
 /mail status                counters + last-run timestamp
 /mail brief [hours]         narrative summary of recent activity
-/mail search <NL query>     find mail by natural-language description
+/mail search <NL query>     find mail by natural-language description (metadata)
 /mail recent [N]            last N mark-read audit rows
 /mail review [N]            review uncertain LLM auto-marks
 /mail rule add "..."        append a natural-language rule the LLM applies
@@ -96,6 +98,8 @@ uv run mail-agent schedule install
 /mail corrections undo N    soft-undo a sender-level override
 /mail help
 ```
+
+**DM free text** — type any question directly to the bot (_"how much did I spend on subscriptions last 3 months?"_) and the inbox analyst fetches full email bodies, extracts structured data, and posts a synthesised answer. No slash command needed.
 
 Every digest / respond post carries three buttons: **Mark read**, **Open in Gmail**, **Wrong bucket** (opens a modal that records a correction and optionally applies to all future mail from that sender).
 
@@ -186,7 +190,7 @@ Use `mail-agent rules wizard` for guided setup, or `mail-agent rules add "..."` 
 ## 🧪 Tests
 
 ```bash
-uv run pytest -q                                  # 145 tests, ~0.5s
+uv run pytest -q                                  # 158 tests, ~0.5s
 uv run ruff check src tests
 uv run mail-agent eval run --min-bucket-accuracy 0.85
 ```
@@ -208,7 +212,6 @@ By design:
 
 Open ideas, not promises:
 
-- 💬 Conversational DM interface (talk to the bot in DMs, not just via slash)
 - 🗂️ Per-account / multi-tenant rule overrides
 - 🤖 Optional NER for name redaction beyond the explicit list
 - ✍️ Reply drafts on `respond` (gated, draft-only, never auto-send)
