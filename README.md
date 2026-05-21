@@ -1,7 +1,7 @@
-# 📬 mail-agent
+# 📬 Mail agent
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://docs.python.org/3/)
-[![Tests](https://img.shields.io/badge/tests-244%20passing-brightgreen.svg)](#tests)
+[![Tests](https://img.shields.io/badge/tests-267%20passing-brightgreen.svg)](#tests)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-yes-success.svg)](#)
 
 A self-hosted Gmail triage agent that classifies every unread message into `ignore`, `notify`, or `respond` using deterministic header rules first and an LLM fallback only on the residue. Acts on the decision — silent archive, Slack digest, or realtime DM — with all data staying on your machine except LLM calls (~$1/month).
@@ -198,7 +198,7 @@ DM the bot any free-text question and the inbox analyst fetches full email bodie
 ## Tests
 
 ```bash
-uv run pytest -q                                   # 244 tests, ~0.7s
+uv run pytest -q                                   # 267 tests, ~0.7s
 uv run ruff check src tests
 uv run mail-agent eval run --min-bucket-accuracy 0.85
 ```

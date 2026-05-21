@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Literal
 
 from ..models import SurfaceResult
 
@@ -127,11 +128,55 @@ _RE_ACTION_PREFIX = re.compile(
     re.IGNORECASE,
 )
 
+# "Re:", "Re: Re:", "Fwd:", "Fw:", "Re-sent:" chains at the start of a subject.
+# Iterated by _normalize_subject — single application strips one layer.
+_RE_REPLY_PREFIX = re.compile(
+    r"^(re|fwd?|fw|re-sent)\s*:\s*",
+    re.IGNORECASE,
+)
+
 
 def _normalize_subject(subject: str) -> str:
-    s = clean_subject(subject).lower().strip()
-    s = _RE_ACTION_PREFIX.sub("", s)
+    """Strip reply prefixes, run calendar cleanup, then loop-strip residual
+    action/reply prefixes until stable.
+
+    Reply prefixes (`Re:`, `Fwd:`, …) are peeled BEFORE `clean_subject` so its
+    invitation/action/date regexes can match the underlying calendar text at
+    position 0, and the attendee parenthetical gets stripped. Without the
+    pre-peel, `Re: Updated invitation: X @ …` normalizes differently from
+    `Updated invitation: X @ …` and the two never collide in the
+    subject-fallback grouping pass.
+    """
+    s = subject.strip()
+
+    # Pre-peel: reply prefixes only. Exposes the underlying calendar prefix
+    # to clean_subject.
+    while True:
+        prev = s
+        s = _RE_REPLY_PREFIX.sub("", s)
+        if s == prev:
+            break
+
+    s = clean_subject(s).lower().strip()
+
+    # Post-peel: handles interleavings like `Declined: Re: 1:1` where one
+    # prefix only becomes the new leading token after the other peels.
+    while True:
+        prev = s
+        s = _RE_ACTION_PREFIX.sub("", s)
+        s = _RE_REPLY_PREFIX.sub("", s)
+        if s == prev:
+            break
     return s
+
+
+def thread_key(result: SurfaceResult) -> tuple[str, str, str]:
+    """Group-by-thread key: (account, bucket, thread_id)."""
+    return (
+        result.email.account,
+        result.decision.bucket.value,
+        result.email.thread_id,
+    )
 
 
 def group_key(result: SurfaceResult) -> tuple[str, str, str]:
@@ -146,6 +191,7 @@ def group_key(result: SurfaceResult) -> tuple[str, str, str]:
 @dataclass
 class ResultGroup:
     members: list[SurfaceResult] = field(default_factory=list)
+    grouped_by: Literal["thread", "subject"] = "subject"
 
     @property
     def representative(self) -> SurfaceResult:
@@ -154,26 +200,62 @@ class ResultGroup:
 
 
 def group_results(results: list[SurfaceResult]) -> list[SurfaceResult | ResultGroup]:
-    """Group results by account+bucket+normalized_subject.
+    """Two-pass grouping: thread-id first, then normalized subject.
 
-    Groups of 1 are returned as plain SurfaceResult.
-    Groups of 2+ are wrapped in ResultGroup.
-    Original ordering is preserved by first-occurrence index.
+    Pass 1: bucket by (account, bucket, thread_id). Threads with ≥2 members
+    become ResultGroup(grouped_by="thread"); singletons feed pass 2.
+
+    Pass 2: bucket the remaining singletons by (account, bucket,
+    normalized_subject). Subjects with ≥3 members become
+    ResultGroup(grouped_by="subject"); the rest emit as SurfaceResult.
+    (Subject is a weaker signal than thread — require more evidence.)
+
+    Ordering: each emitted item's position in the output is the original
+    index of its first member.
     """
-    buckets: dict[tuple, list[SurfaceResult]] = {}
-    order: list[tuple] = []
-    for r in results:
-        k = group_key(r)
-        if k not in buckets:
-            buckets[k] = []
-            order.append(k)
-        buckets[k].append(r)
+    SUBJECT_GROUP_MIN = 3
 
-    out: list[SurfaceResult | ResultGroup] = []
-    for k in order:
-        members = buckets[k]
+    # Pass 1: thread bucketing.
+    thread_buckets: dict[tuple, list[SurfaceResult]] = {}
+    thread_first_idx: dict[tuple, int] = {}
+    for idx, r in enumerate(results):
+        k = thread_key(r)
+        if k not in thread_buckets:
+            thread_buckets[k] = []
+            thread_first_idx[k] = idx
+        thread_buckets[k].append(r)
+
+    # Emitted items keyed by their first-occurrence index in `results`.
+    emitted: dict[int, SurfaceResult | ResultGroup] = {}
+    # Carry per-member original idx through to pass 2.
+    leftover: list[tuple[int, SurfaceResult]] = []
+
+    for k, members in thread_buckets.items():
         if len(members) >= 2:
-            out.append(ResultGroup(members=members))
+            emitted[thread_first_idx[k]] = ResultGroup(
+                members=members, grouped_by="thread"
+            )
         else:
-            out.append(members[0])
-    return out
+            leftover.append((thread_first_idx[k], members[0]))
+
+    # Pass 2: subject bucketing on leftovers only. Keep per-member idx so
+    # below-threshold members can be emitted at their own original positions.
+    subject_buckets: dict[tuple, list[tuple[int, SurfaceResult]]] = {}
+    subject_first_idx: dict[tuple, int] = {}
+    for original_idx, r in leftover:
+        k = group_key(r)
+        if k not in subject_buckets:
+            subject_buckets[k] = []
+            subject_first_idx[k] = original_idx
+        subject_buckets[k].append((original_idx, r))
+
+    for k, indexed_members in subject_buckets.items():
+        if len(indexed_members) >= SUBJECT_GROUP_MIN:
+            emitted[subject_first_idx[k]] = ResultGroup(
+                members=[m for _, m in indexed_members], grouped_by="subject"
+            )
+        else:
+            for original_idx, r in indexed_members:
+                emitted[original_idx] = r
+
+    return [emitted[idx] for idx in sorted(emitted)]

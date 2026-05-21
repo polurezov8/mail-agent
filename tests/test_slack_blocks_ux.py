@@ -221,3 +221,38 @@ def test_grouped_row_mark_all_value_format():
                 assert "personal:id-two" in el["value"]
                 return
     raise AssertionError("mark_read_bulk not found")
+
+
+# ─── grouped_by marker ────────────────────────────────────────────────────────
+
+
+def test_grouped_row_thread_marker():
+    """Thread-grouped cards show 🧵 thread · N messages, not 📦 similar."""
+    import json
+
+    from mail_agent.slack.blocks import grouped_row_blocks
+    from mail_agent.slack.format import ResultGroup
+
+    s1 = _surface(subject="Project plan")
+    s2 = _surface(subject="Re: Project plan")
+    group = ResultGroup(members=[s1, s2], grouped_by="thread")
+    blob = json.dumps(grouped_row_blocks(group), ensure_ascii=False)
+    assert "🧵 thread" in blob
+    assert "2 messages" in blob
+    assert "similar" not in blob
+
+
+def test_grouped_row_subject_marker_unchanged():
+    """Subject-grouped cards keep the original 📦 N similar marker."""
+    import json
+
+    from mail_agent.slack.blocks import grouped_row_blocks
+    from mail_agent.slack.format import ResultGroup
+
+    s1 = _surface(subject="Linear: CTS-1 updated")
+    s2 = _surface(subject="Linear: CTS-2 updated")
+    group = ResultGroup(members=[s1, s2], grouped_by="subject")
+    blob = json.dumps(grouped_row_blocks(group), ensure_ascii=False)
+    assert "📦" in blob
+    assert "similar" in blob
+    assert "🧵" not in blob

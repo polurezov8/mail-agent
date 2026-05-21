@@ -62,12 +62,25 @@ def test_mixed_subjects_four_and_one():
     assert isinstance(grouped[1], SurfaceResult)
 
 
-def test_exactly_two_collapses():
+def test_exactly_three_collapses():
+    """Subject threshold is 3: two same-subject items stay separate,
+    three collapse into a group."""
+    r1 = _make("Declined: Meeting X", idx=0)
+    r2 = _make("Declined: Meeting X", idx=1)
+    r3 = _make("Declined: Meeting X", idx=2)
+    grouped = group_results([r1, r2, r3])
+    assert len(grouped) == 1
+    assert isinstance(grouped[0], ResultGroup)
+
+
+def test_exactly_two_does_not_collapse():
+    """Two same-subject items with distinct thread IDs stay as singletons
+    (subject threshold is 3, not 2)."""
     r1 = _make("Declined: Meeting X", idx=0)
     r2 = _make("Declined: Meeting X", idx=1)
     grouped = group_results([r1, r2])
-    assert len(grouped) == 1
-    assert isinstance(grouped[0], ResultGroup)
+    assert len(grouped) == 2
+    assert all(isinstance(g, SurfaceResult) for g in grouped)
 
 
 # ─── digest_blocks integration ────────────────────────────────────────────────
@@ -87,12 +100,17 @@ def test_digest_four_identical_renders_one_group_card():
 
 
 def test_digest_mixed_renders_group_plus_singleton():
+    from mail_agent.models import ThreadId
+
+    # Two items sharing a thread_id → thread group (≥2 threshold).
     same = [
         _make("Declined: ⚡️ Nibble Planning", bucket=Bucket.NOTIFY, idx=i) for i in range(2)
     ]
+    same[0].email.thread_id = ThreadId("t-shared")
+    same[1].email.thread_id = ThreadId("t-shared")
     solo = _make("Separate topic", bucket=Bucket.NOTIFY, idx=99)
     blocks = digest_blocks(same + [solo])
-    # 1 header + 1 group (4 blocks) + 1 singleton (2 blocks) = 7
+    # 1 header + 1 thread group (4 blocks) + 1 singleton (2 blocks) = 7
     assert len(blocks) == 7
 
 
@@ -113,3 +131,19 @@ def test_uncertain_four_identical_collapses():
     assert len(blocks) == 6
     rich = next((b for b in blocks if b.get("type") == "rich_text"), None)
     assert rich is not None
+
+
+def test_digest_blocks_thread_groups_render_with_thread_marker():
+    """Two messages in the same thread → digest_blocks renders one grouped
+    card carrying the 🧵 thread marker (not 📦 similar)."""
+    import json
+
+    a = _make("Project plan", bucket=Bucket.NOTIFY, idx=0)
+    a.email.thread_id = ThreadId("t-1")
+    b = _make("Re: Project plan", bucket=Bucket.NOTIFY, idx=1)
+    b.email.thread_id = ThreadId("t-1")
+
+    blocks = digest_blocks([a, b], show_account=False)
+    blob = json.dumps(blocks, ensure_ascii=False)
+    assert "🧵 thread" in blob
+    assert "2 messages" in blob

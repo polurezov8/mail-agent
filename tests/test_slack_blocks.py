@@ -69,17 +69,19 @@ def test_digest_blocks_two_identical_subjects_collapse(sample_email, decision_fa
     surface = SurfaceResult(email=sample_email(), decision=decision_factory(bucket=Bucket.NOTIFY))
     blocks = digest_blocks([surface, surface])
     assert blocks[0]["type"] == "header"
-    # Two identical-subject items → one grouped card (section + rich_text + context + actions)
+    # Two items sharing a thread_id → one grouped card (collapsed via thread pass) (section + rich_text + context + actions)
     assert len(blocks) == 5  # 1 header + 4 group blocks
 
 
 def test_digest_blocks_two_different_subjects_stay_separate(sample_email, decision_factory):
+    from mail_agent.models import ThreadId
+
     s1 = SurfaceResult(
-        email=sample_email(subject="Alpha meeting"),
+        email=sample_email(subject="Alpha meeting", thread_id=ThreadId("t-alpha")),
         decision=decision_factory(bucket=Bucket.NOTIFY),
     )
     s2 = SurfaceResult(
-        email=sample_email(subject="Beta standup"),
+        email=sample_email(subject="Beta standup", thread_id=ThreadId("t-beta")),
         decision=decision_factory(bucket=Bucket.NOTIFY),
     )
     blocks = digest_blocks([s1, s2])

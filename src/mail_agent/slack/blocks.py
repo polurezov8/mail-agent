@@ -602,7 +602,10 @@ _DIGEST_ROWS_PER_MESSAGE = 24
 
 
 def grouped_row_blocks(group, *, show_account: bool = False) -> list[Block]:
-    """Collapsed card for 2+ results sharing the same subject+account+bucket."""
+    """Collapsed card for a thread group (≥2 sharing thread_id) or a subject
+    group (≥3 sharing normalized subject). Account+bucket always shared. The
+    `group.grouped_by` discriminator selects the context marker
+    (`🧵 thread · N messages` vs `📦 N similar`)."""
     from .format import clean_snippet, clean_subject, relative_time
 
     rep = group.representative
@@ -656,7 +659,11 @@ def grouped_row_blocks(group, *, show_account: bool = False) -> list[Block]:
     meta_parts = []
     if show_account:
         meta_parts.append(f"📬 {email.account}")
-    meta_parts.append(f"📦 {n} similar")
+    meta_parts.append(
+        f"🧵 thread · {n} messages"
+        if group.grouped_by == "thread"
+        else f"📦 {n} similar"
+    )
     oldest = min(r.email.received_at for r in group.members)
     newest = max(r.email.received_at for r in group.members)
     meta_parts.append(f"oldest {relative_time(oldest)} · newest {relative_time(newest)}")
@@ -702,8 +709,10 @@ def grouped_row_blocks(group, *, show_account: bool = False) -> list[Block]:
 
 
 def digest_blocks(results: list[SurfaceResult], *, show_account: bool = False) -> list[Block]:
-    """Batched notify-bucket mails. Groups ≥2 identical-subject items into one card.
-    Worst case: 24 items all in 2-item groups → 12×4 + 1 header = 49 blocks (< 50 cap)."""
+    """Batched notify-bucket mails. Runs `group_results` first: items sharing
+    a Gmail thread_id collapse at ≥2; items sharing only a normalized subject
+    collapse at ≥3. Worst case: 24 items all in 2-item thread groups →
+    12×4 + 1 header = 49 blocks (< 50 cap)."""
     from .format import ResultGroup, group_results
 
     grouped = group_results(results)
