@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -15,6 +16,11 @@ from .config import LLMConfig
 logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 30
+
+
+def _strip_html(text: str) -> str:
+    no_tags = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", no_tags).strip()
 
 _PLAN_SYSTEM = """You translate a user's inbox question into a structured analysis plan.
 
@@ -40,15 +46,21 @@ Examples:
 
 _EXTRACT_SYSTEM = """You are an email data extractor. For each email, apply the extraction instruction and return structured JSON.
 
-You will receive a JSON array of emails. For each, return an object with:
+Each email has: message_id, subject, from_email, snippet (short Gmail preview), body (full text, may be messy).
+Prefer body for data; fall back to snippet if body is empty or unhelpful.
+
+For each email, return:
   "message_id": the id field from input
-  "extracted": a dict with the extracted fields, or null if the email is irrelevant to the instruction
+  "extracted": a dict with the extracted fields, or null ONLY if the email genuinely contains no relevant information
+
+Be generous: partial data is better than null. If you can find an amount but not a date, return the amount.
+Set null only for emails that are clearly unrelated (e.g. a marketing teaser with no purchase details).
 
 Return ONLY a JSON array. No explanation. No markdown fences.
 
 Example output:
 [
-  {"message_id": "abc123", "extracted": {"amount": 9.99, "date": "2026-04-01", "item": "iCloud+"}},
+  {"message_id": "abc123", "extracted": {"amount": 9.99, "currency": "USD", "date": "2026-04-01", "item": "iCloud+"}},
   {"message_id": "def456", "extracted": null}
 ]
 """
@@ -104,7 +116,7 @@ def build_analysis_plan(question: str, cfg: LLMConfig) -> AnalysisPlan:
 
 
 def extract_batch(
-    emails: list[dict],  # each: {message_id, from_email, subject, received_at, body}
+    emails: list[dict],  # each: {message_id, from_email, subject, received_at, snippet, body}
     instruction: str,
     cfg: LLMConfig,
 ) -> list[dict]:
@@ -205,10 +217,13 @@ def analyse_inbox(question: str, cfg: LLMConfig) -> AnalysisAnswer:
     for msg in messages:
         acct = next((a for a in accounts if a.name == msg.account), accounts[0])
         try:
-            body = fetch_message_body(acct, msg.id)
+            raw_body = fetch_message_body(acct, msg.id)
         except Exception:
-            logger.warning("fetch_message_body failed for %s, skipping", msg.id)
-            body = msg.snippet  # fallback to snippet
+            logger.warning("fetch_message_body failed for %s, using snippet", msg.id)
+            raw_body = ""
+
+        # Strip HTML tags so the LLM sees plain text, not tag soup
+        body = _strip_html(raw_body) if raw_body.lstrip().startswith("<") else raw_body
 
         email_inputs.append(
             {
@@ -216,7 +231,8 @@ def analyse_inbox(question: str, cfg: LLMConfig) -> AnalysisAnswer:
                 "from_email": msg.from_email,
                 "subject": msg.subject,
                 "received_at": msg.received_at.isoformat(),
-                "body": body,
+                "snippet": msg.snippet,
+                "body": body or msg.snippet,
             }
         )
 
