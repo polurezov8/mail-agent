@@ -245,7 +245,9 @@ def _run_search_background(respond: Respond, nl_query: str) -> None:
             respond(text=":warning: No authorized Gmail accounts.", response_type="ephemeral")
             return
 
-        effective_limit = plan.suggested_limit or 10
+        # (50 Slack block limit − 2 header/context) / 3 per result = 16 max
+        _SEARCH_DISPLAY_LIMIT = 16
+        effective_limit = min(plan.suggested_limit or 10, _SEARCH_DISPLAY_LIMIT)
         hits = []
         for acct in accounts:
             try:
