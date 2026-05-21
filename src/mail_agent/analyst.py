@@ -73,10 +73,16 @@ You will receive:
   - A JSON array of extraction results (extracted fields per email, nulls already filtered)
 
 Return:
-  answer: markdown string answering the question completely
+  answer: your answer formatted as Slack mrkdwn. Rules:
+    - Bold: *text* (NOT **text**)
+    - No ### headers — use *Header text* on its own line instead
+    - No --- dividers — use blank lines for spacing
+    - Tables: wrap in triple-backtick code blocks for alignment
+    - Bullet lists: use • or - prefix
+    - Totals/summaries: put on their own line as *Grand total: $X*
   format_hint: one of "table", "bullet_list", "paragraph", "number"
-    - "number": answer is a single number or amount
-    - "table": answer is a comparison across items/dates
+    - "number": answer is a single dollar/currency amount (e.g. "You spent *$26.94*")
+    - "table": answer contains a comparison table
     - "bullet_list": answer is a list of items
     - "paragraph": freeform prose
   source_count: integer — how many emails contributed to the answer

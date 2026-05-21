@@ -549,30 +549,34 @@ def split_digest(results: list[SurfaceResult]) -> list[list[SurfaceResult]]:
 
 def ask_result_blocks(question: str, answer) -> list[Block]:
     """Render an AnalysisAnswer as a Slack message."""
-    header: Block = {
-        "type": "header",
-        "text": {"type": "plain_text", "text": f"🔎 {_truncate(question, 150)}"},
-    }
+    blocks: list[Block] = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"🔎 {_truncate(question, 150)}"},
+        },
+        {"type": "divider"},
+    ]
 
-    if answer.format_hint == "table":
-        body_text = f"```\n{answer.answer}\n```"
-    elif answer.format_hint == "number":
-        body_text = f"*{answer.answer}*"
-    else:
-        body_text = answer.answer
+    # Slack section blocks cap at 3 000 chars — split answer if needed
+    text = f"*{answer.answer}*" if answer.format_hint == "number" else answer.answer
+    chunk_size = 2_900
+    for i in range(0, max(1, len(text)), chunk_size):
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": text[i : i + chunk_size]},
+            }
+        )
 
-    body: Block = {
-        "type": "section",
-        "text": {"type": "mrkdwn", "text": body_text},
-    }
-
-    footer: Block = {
-        "type": "context",
-        "elements": [
-            {"type": "mrkdwn", "text": f"_Based on {answer.source_count} email(s)_"}
-        ],
-    }
-    return [header, body, footer]
+    blocks.append(
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"_Based on {answer.source_count} email(s)_"}
+            ],
+        }
+    )
+    return blocks
 
 
 def uncertain_ignore_blocks(results: list[SurfaceResult]) -> list[Block]:
