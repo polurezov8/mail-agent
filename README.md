@@ -14,7 +14,6 @@ A self-hosted Gmail triage agent that classifies every unread message into `igno
 - [Configuration](#configuration)
 - [CLI reference](#cli-reference)
 - [Tests](#tests)
-- [Roadmap](#roadmap)
 
 ---
 
@@ -202,14 +201,6 @@ uv run pytest -q                                   # 267 tests, ~0.7s
 uv run ruff check src tests
 uv run mail-agent eval run --min-bucket-accuracy 0.85
 ```
-
----
-
-## Roadmap
-
-- Reply drafts on `respond` (gated, draft-only, never auto-send)
-- Long-horizon learning from corrections (rule suggestions)
-- Per-account rule overrides
 
 ---
 
