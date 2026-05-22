@@ -3,6 +3,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://docs.python.org/3/)
 [![Tests](https://img.shields.io/badge/tests-267%20passing-brightgreen.svg)](#tests)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-yes-success.svg)](#)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A self-hosted Gmail triage agent that classifies every unread message into `ignore`, `notify`, or `respond` using deterministic header rules first and an LLM fallback only on the residue. Acts on the decision — silent archive, Slack digest, or realtime DM — with all data staying on your machine except LLM calls (~$1/month).
 
@@ -12,7 +13,7 @@ A self-hosted Gmail triage agent that classifies every unread message into `igno
 - [How it works](#how-it-works)
 - [Slack cards](#slack-cards)
 - [Configuration](#configuration)
-- [CLI reference](#cli-reference)
+- [CLI](#cli)
 - [Tests](#tests)
 
 ---
@@ -157,7 +158,7 @@ OAuth scopes: `gmail.modify` (read + remove `UNREAD` label). Never `gmail.send`.
 
 ---
 
-## CLI reference
+## CLI
 
 ```
 mail-agent triage [--account NAME] [--mock] [--no-slack] [--dry-run]
