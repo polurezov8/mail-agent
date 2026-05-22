@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from .config import load_config
-from .graph.build import build_graph
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
@@ -54,19 +53,18 @@ def triage(
 ) -> None:
     """Run one triage pass."""
     load_dotenv()
+    from . import application
+
     cfg = load_config(config_path)
-    graph = build_graph()
-    graph.invoke(
-        {
-            "config": cfg,
-            "mock": mock,
-            "query": query,
-            "limit": limit,
-            "skip_processed": not reprocess,
-            "dry_run": dry_run,
-            "no_slack": no_slack,
-            "accounts": _resolve_accounts(account),
-        }
+    application.triage(
+        cfg,
+        mock=mock,
+        query=query,
+        limit=limit,
+        skip_processed=not reprocess,
+        dry_run=dry_run,
+        no_slack=no_slack,
+        accounts=_resolve_accounts(account),
     )
 
 
@@ -122,34 +120,26 @@ def search(
     load_dotenv()
     from rich.table import Table
 
-    from .config import load_config
-    from .gmail.accounts import load_accounts
-    from .gmail.client import search_messages
-    from .search import build_gmail_query
+    from . import application
 
-    cfg = load_config("config/rules.yaml")
-    plan = build_gmail_query(query, cfg.llm)
+    cfg = application.load_default_config()
+    result = application.search(
+        query,
+        cfg,
+        limit=limit,
+        accounts=_resolve_accounts(account),
+    )
+    plan = result.plan
     if not plan.gmail_query:
         console.print("[yellow]Empty query plan.[/yellow]")
         raise typer.Exit(code=1)
-
-    effective_limit = plan.suggested_limit or limit
 
     console.print(f"[dim]Gmail query:[/dim] [bold]{plan.gmail_query}[/bold]")
     console.print(f"[dim]Why:[/dim] {plan.reasoning}")
     if plan.suggested_limit:
         console.print(f"[dim]Limit:[/dim] {plan.suggested_limit} (from your query)")
 
-    account_filter = _resolve_accounts(account)
-    hits = []
-    for acct in load_accounts():
-        if account_filter is not None and acct.name not in account_filter:
-            continue
-        if acct.is_authorized:
-            hits.extend(search_messages(acct, plan.gmail_query, limit=effective_limit))
-    hits.sort(key=lambda m: m.received_at, reverse=True)
-    hits = hits[:effective_limit]
-
+    hits = result.hits
     if not hits:
         console.print("[dim]No matches.[/dim]")
         return
@@ -297,10 +287,10 @@ def stats(
     from rich.table import Table
     from rich.text import Text
 
-    from .store.stats import compute_metrics
+    from . import application
     from .visualize import hbar, percent, sparkline
 
-    s = compute_metrics(period=period, accounts=_resolve_accounts(account))
+    s = application.stats(period=period, accounts=_resolve_accounts(account))
     period_label = {
         "day": "24 hours",
         "week": "7 days",
@@ -392,9 +382,9 @@ def brief(
     load_dotenv()
     from rich.panel import Panel
 
-    from .brief import build_brief
+    from . import application
 
-    summary = build_brief(hours=hours, accounts=_resolve_accounts(account))
+    summary = application.brief(hours=hours, accounts=_resolve_accounts(account))
     bucket_line = " · ".join(
         f"{b}: {summary.bucket_counts.get(b, 0)}" for b in ("ignore", "notify", "respond")
     )

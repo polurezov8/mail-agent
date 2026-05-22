@@ -14,8 +14,6 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from ..config import load_config
-from ..graph.build import build_graph
-from ..models import AutoMarkResult, SurfaceResult
 from ..store.stats import get_recent_audit, get_status
 
 Respond = Callable[..., Any]
@@ -116,22 +114,14 @@ def _run_triage_background(respond: Respond) -> None:
     regardless of what was surfaced in a previous run.
     """
     try:
-        cfg = load_config("config/rules.yaml")
-        graph = build_graph()
-        state = graph.invoke(
-            {
-                "config": cfg,
-                "skip_processed": False,
-            }
-        )
-        results = state.get("results", [])
-        n = len(results)
-        n_marked = sum(1 for r in results if isinstance(r, AutoMarkResult))
-        n_surface = sum(1 for r in results if isinstance(r, SurfaceResult))
+        from .. import application
+
+        cfg = application.load_default_config()
+        result = application.triage(cfg, skip_processed=False)
         respond(
             text=(
-                f"✅ Triage done. *{n}* mails processed · "
-                f"*{n_marked}* auto-marked · *{n_surface}* surfaced.\n"
+                f"✅ Triage done. *{result.n_total}* mails processed · "
+                f"*{result.n_auto_marked}* auto-marked · *{result.n_surfaced}* surfaced.\n"
                 f"_Use `/mail recent` to see what was marked._"
             ),
             response_type="ephemeral",
@@ -223,15 +213,16 @@ def handle_corrections_undo(respond: Respond, correction_id: int) -> None:
 
 def _run_search_background(respond: Respond, nl_query: str) -> None:
     try:
-        from ..config import load_config
+        from .. import application
         from ..gmail.accounts import load_accounts
-        from ..gmail.client import search_messages
-        from ..search import build_gmail_query
-        from .blocks import search_results_blocks
-        from .client import get_channel_id, get_client, is_configured
+        from ..notifier import SearchPayload, get_notifier
 
-        cfg = load_config("config/rules.yaml")
-        plan = build_gmail_query(nl_query, cfg.llm)
+        cfg = application.load_default_config()
+        # Cap below the Slack block limit: 50 blocks − 2 header/context, ÷3 per result = 16.
+        _SEARCH_DISPLAY_LIMIT = 16
+        result = application.search(nl_query, cfg, limit=_SEARCH_DISPLAY_LIMIT)
+        plan = result.plan
+
         if not plan.gmail_query:
             respond(
                 text=":warning: Couldn't build a Gmail query from that.",
@@ -239,45 +230,24 @@ def _run_search_background(respond: Respond, nl_query: str) -> None:
             )
             return
 
-        accounts = [a for a in load_accounts() if a.is_authorized]
-        if not accounts:
+        if not [a for a in load_accounts() if a.is_authorized]:
             respond(text=":warning: No authorized Gmail accounts.", response_type="ephemeral")
             return
 
-        show_account = len(accounts) > 1
-
-        # (50 Slack block limit − 2 header/context) / 3 per result = 16 max
-        _SEARCH_DISPLAY_LIMIT = 16
-        effective_limit = min(plan.suggested_limit or 10, _SEARCH_DISPLAY_LIMIT)
-        hits = []
-        for acct in accounts:
-            try:
-                hits.extend(search_messages(acct, plan.gmail_query, limit=effective_limit))
-            except Exception as exc:
-                respond(
-                    text=f":warning: Search failed on `{acct.name}`: `{exc}`",
-                    response_type="ephemeral",
-                )
-                return
-        hits.sort(key=lambda m: m.received_at, reverse=True)
-        top = hits[:effective_limit]
-
-        if not is_configured():
+        notifier = get_notifier()
+        if not notifier.enabled:
             respond(text=":warning: Slack not configured.", response_type="ephemeral")
             return
-        client = get_client()
-        channel = get_channel_id()
-        client.chat_postMessage(
-            channel=channel,
-            blocks=search_results_blocks(
-                nl_query, plan.gmail_query, top, plan.reasoning, show_account=show_account
+        notifier.post_search(
+            SearchPayload(
+                query=nl_query,
+                gmail_query=plan.gmail_query,
+                hits=result.hits,
+                plan=plan,
             ),
-            text=f"Search · {nl_query[:80]}",
-            unfurl_links=False,
-            unfurl_media=False,
         )
         respond(
-            text=f"🔍 Posted {len(top)} result(s) for: _{nl_query}_",
+            text=f"🔍 Posted {len(result.hits)} result(s) for: _{nl_query}_",
             response_type="ephemeral",
         )
     except Exception as exc:
@@ -293,17 +263,20 @@ def handle_search(respond: Respond, nl_query: str) -> None:
 
 def _run_ask_background(respond: Respond, question: str) -> None:
     try:
-        from ..analyst import analyse_inbox
-        from ..config import load_config
+        from .. import application
+        from ..notifier import get_notifier
         from .blocks import ask_result_blocks
-        from .client import get_channel_id, get_client, is_configured
+        from .client import get_channel_id, get_client
 
-        cfg = load_config("config/rules.yaml")
-        answer = analyse_inbox(question, cfg.llm)
+        cfg = application.load_default_config()
+        answer = application.ask(question, cfg)
 
-        if not is_configured():
+        notifier = get_notifier()
+        if not notifier.enabled:
             respond(text=":warning: Slack not configured.", response_type="ephemeral")
             return
+        # Analyst response has its own block builder; use the SlackNotifier's
+        # client directly rather than adding a single-use protocol method.
         client = get_client()
         channel = get_channel_id()
         client.chat_postMessage(
@@ -326,23 +299,15 @@ def handle_ask(respond: Respond, question: str) -> None:
 
 
 def handle_stats(respond: Respond, period: str) -> None:
-    from ..store.stats import compute_metrics
-    from .blocks import stats_blocks
-    from .client import get_channel_id, get_client, is_configured
+    from .. import application
+    from ..notifier import StatsPayload, get_notifier
 
-    snapshot = compute_metrics(period=period)
-    if not is_configured():
+    snapshot = application.stats(period=period)
+    notifier = get_notifier()
+    if not notifier.enabled:
         respond(text=":warning: Slack not configured.", response_type="ephemeral")
         return
-    client = get_client()
-    channel = get_channel_id()
-    client.chat_postMessage(
-        channel=channel,
-        blocks=stats_blocks(snapshot),
-        text=f"Mail Stats · {period}",
-        unfurl_links=False,
-        unfurl_media=False,
-    )
+    notifier.post_stats(StatsPayload(metrics=snapshot, period_label=period))
     respond(
         text=f"📈 Stats posted ({period}, {snapshot.total_processed} processed).",
         response_type="ephemeral",
@@ -350,23 +315,15 @@ def handle_stats(respond: Respond, period: str) -> None:
 
 
 def handle_brief(respond: Respond, hours: int) -> None:
-    from ..brief import build_brief
-    from .blocks import brief_blocks
-    from .client import get_channel_id, get_client, is_configured
+    from .. import application
+    from ..notifier import BriefPayload, get_notifier
 
-    summary = build_brief(hours=hours)
-    if not is_configured():
+    summary = application.brief(hours=hours)
+    notifier = get_notifier()
+    if not notifier.enabled:
         respond(text=":warning: Slack not configured.", response_type="ephemeral")
         return
-    client = get_client()
-    channel = get_channel_id()
-    client.chat_postMessage(
-        channel=channel,
-        blocks=brief_blocks(summary),
-        text=f"Mail Brief · last {hours}h",
-        unfurl_links=False,
-        unfurl_media=False,
-    )
+    notifier.post_brief(BriefPayload(summary=summary, hours=hours))
     respond(
         text=(f"📊 Brief posted (last {hours}h, {summary.processed_total} processed)."),
         response_type="ephemeral",

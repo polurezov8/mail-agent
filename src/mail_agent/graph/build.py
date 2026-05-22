@@ -11,7 +11,6 @@ from collections import defaultdict
 
 from langgraph.graph import END, START, StateGraph
 
-from ..llm.classifier import classify
 from ..models import (
     AccountName,
     AutoMarkResult,
@@ -22,7 +21,6 @@ from ..models import (
     TriageDecision,
     TriageResult,
 )
-from ..rules.header import match_first
 from .state import GraphState
 
 
@@ -93,35 +91,16 @@ def node_triage(state: GraphState) -> GraphState:
     mock = bool(state.get("mock", False))
 
     from ..store.sqlite import sender_override
+    from .triage_decision import decide_for_email
 
     results: list[TriageResult] = []
     for email in state["inbox"]:
-        # Stage 0: user corrections override everything.
-        override = sender_override(email.from_email)
-        if override:
-            override_bucket = Bucket(override)
-            decision = TriageDecision(
-                bucket=override_bucket,
-                rule_name=None,
-                reasoning=f"Sender-level user correction → {override}.",
-                confidence=1.0,
-                source="user_correction",
-                auto_mark=override_bucket == Bucket.IGNORE,
-            )
-        else:
-            decision = match_first(email, cfg.rules)
-            if decision is None:
-                if cfg.llm.enabled:
-                    thread_context = _fetch_thread_context(email, mock=mock)
-                    decision = classify(email, cfg.rules, cfg.llm, thread_context)
-                else:
-                    decision = TriageDecision(
-                        bucket=Bucket.NOTIFY,
-                        rule_name=None,
-                        reasoning="No rule matched; LLM disabled. Defaulting to notify.",
-                        confidence=0.0,
-                        source="header_rule",
-                    )
+        decision = decide_for_email(
+            email,
+            cfg,
+            get_override=sender_override,
+            get_thread_context=lambda e: _fetch_thread_context(e, mock=mock),
+        )
         results.append(_gate(email, decision, min_conf))
     return {"results": results}
 
