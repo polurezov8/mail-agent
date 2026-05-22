@@ -676,11 +676,6 @@ app.add_typer(schedule_app, name="schedule")
 
 @schedule_app.command("install")
 def schedule_install(
-    poll_minutes: int = typer.Option(30, "--poll-minutes", help="Interval between triage runs."),
-    daily_hour: int = typer.Option(
-        10, "--daily-hour", help="Hour (0-23, local) for the daily catch-all run."
-    ),
-    daily_minute: int = typer.Option(0, "--daily-minute", help="Minute (0-59) for the daily run."),
     no_listener: bool = typer.Option(
         False, "--no-listener", help="Skip installing the Slack listener job."
     ),
@@ -696,11 +691,11 @@ def schedule_install(
     jobs = default_jobs(
         project_root=project_root,
         uv_bin=uv_bin,
-        poll_interval_seconds=poll_minutes * 60,
-        daily_hour=daily_hour,
-        daily_minute=daily_minute,
         include_listener=not no_listener,
     )
+    removed = sched.uninstall()
+    if removed:
+        console.print(f"[dim]Removed {len(removed)} previous job(s): {', '.join(removed)}[/dim]")
     sched.install(jobs)
     console.print(f"[green]Installed {len(jobs)} jobs via {sched.name}.[/green]")
     for j in jobs:

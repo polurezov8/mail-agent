@@ -3,21 +3,36 @@ from __future__ import annotations
 from pathlib import Path
 
 from .types import (
-    DailySchedule,
-    IntervalSchedule,
+    CronSchedule,
+    CronWindow,
     JobSpec,
     KeepAliveSchedule,
+    Weekday,
 )
 
 PREFIX = "mail-agent."
 
 
+_WORKDAY_WINDOW = CronWindow(
+    weekdays=frozenset({
+        Weekday.MON, Weekday.TUE, Weekday.WED, Weekday.THU, Weekday.FRI,
+    }),
+    hours=frozenset({10, 12, 14, 16, 18}),
+)
+
+_WEEKEND_WINDOW = CronWindow(
+    weekdays=frozenset({Weekday.SAT, Weekday.SUN}),
+    hours=frozenset({10, 18}),
+)
+
+DEFAULT_TRIAGE_SCHEDULE = CronSchedule(
+    windows=(_WORKDAY_WINDOW, _WEEKEND_WINDOW),
+)
+
+
 def default_jobs(
     project_root: Path,
     uv_bin: Path,
-    poll_interval_seconds: int = 1800,
-    daily_hour: int = 10,
-    daily_minute: int = 0,
     include_listener: bool = True,
 ) -> list[JobSpec]:
     log_dir = project_root / "logs"
@@ -28,17 +43,10 @@ def default_jobs(
 
     jobs: list[JobSpec] = [
         JobSpec(
-            name=f"{PREFIX}triage-poll",
-            description="Run mail-agent triage on a fixed interval.",
+            name=f"{PREFIX}triage-cron",
+            description="Workday-aware mail-agent triage.",
             command=triage_cmd,
-            schedule=IntervalSchedule(seconds=poll_interval_seconds),
-            **common,
-        ),
-        JobSpec(
-            name=f"{PREFIX}triage-daily",
-            description="Daily mail-agent triage sweep (catch-all).",
-            command=triage_cmd,
-            schedule=DailySchedule(hour=daily_hour, minute=daily_minute),
+            schedule=DEFAULT_TRIAGE_SCHEDULE,
             **common,
         ),
     ]

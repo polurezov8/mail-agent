@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from mail_agent.schedule.systemd import SystemdScheduler
+from mail_agent.schedule.systemd import SystemdScheduler, _cron_to_oncalendar_lines
 from mail_agent.schedule.types import (
+    CronSchedule,
+    CronWindow,
     DailySchedule,
     IntervalSchedule,
     JobSpec,
     KeepAliveSchedule,
+    Weekday,
 )
 
 
@@ -49,3 +52,37 @@ def test_daily_timer_uses_on_calendar(tmp_path):
     job = _job("mail-agent.daily", DailySchedule(hour=9, minute=5), tmp_path)
     unit = sched._render_timer(job)
     assert "OnCalendar=*-*-* 09:05:00" in unit
+
+
+def _workday_schedule() -> CronSchedule:
+    return CronSchedule(
+        windows=(
+            CronWindow(
+                weekdays=frozenset({
+                    Weekday.MON, Weekday.TUE, Weekday.WED, Weekday.THU, Weekday.FRI,
+                }),
+                hours=frozenset({10, 12, 14, 16, 18}),
+            ),
+            CronWindow(
+                weekdays=frozenset({Weekday.SAT, Weekday.SUN}),
+                hours=frozenset({10, 18}),
+            ),
+        )
+    )
+
+
+def test_cron_to_oncalendar_lines_default_schedule():
+    lines = _cron_to_oncalendar_lines(_workday_schedule())
+    assert lines == [
+        "OnCalendar=Mon,Tue,Wed,Thu,Fri 10,12,14,16,18:00:00",
+        "OnCalendar=Sat,Sun 10,18:00:00",
+    ]
+
+
+def test_render_timer_with_cron_schedule(tmp_path):
+    sched = SystemdScheduler(user_units_dir=tmp_path)
+    job = _job("mail-agent.cron-test", _workday_schedule(), tmp_path)
+    unit = sched._render_timer(job)
+    assert "OnCalendar=Mon,Tue,Wed,Thu,Fri 10,12,14,16,18:00:00" in unit
+    assert "OnCalendar=Sat,Sun 10,18:00:00" in unit
+    assert "Persistent=true" in unit

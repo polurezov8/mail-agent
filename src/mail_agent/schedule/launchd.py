@@ -5,12 +5,26 @@ import subprocess
 from pathlib import Path
 
 from .types import (
+    CronSchedule,
     DailySchedule,
     IntervalSchedule,
     JobSpec,
     JobStatus,
     KeepAliveSchedule,
 )
+
+
+def _cron_to_plist_entries(s: CronSchedule) -> list[dict]:
+    entries: list[dict] = []
+    for w in s.windows:
+        for day in sorted(w.weekdays):
+            for hour in sorted(w.hours):
+                entries.append({
+                    "Weekday": int(day),
+                    "Hour": hour,
+                    "Minute": w.minute,
+                })
+    return entries
 
 
 class LaunchdScheduler:
@@ -43,6 +57,8 @@ class LaunchdScheduler:
             d["RunAtLoad"] = True
         elif isinstance(s, DailySchedule):
             d["StartCalendarInterval"] = {"Hour": s.hour, "Minute": s.minute}
+        elif isinstance(s, CronSchedule):
+            d["StartCalendarInterval"] = _cron_to_plist_entries(s)
         elif isinstance(s, KeepAliveSchedule):
             d["KeepAlive"] = True
             d["RunAtLoad"] = True

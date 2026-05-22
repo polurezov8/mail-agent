@@ -53,6 +53,8 @@ uv run mail-agent doctor            # end-to-end health check
 uv run mail-agent schedule install  # launchd (macOS) or systemd (Linux)
 ```
 
+Default cadence: Mon–Fri at 10:00, 12:00, 14:00, 16:00, 18:00; Sat–Sun at 10:00 and 18:00. The Slack listener stays running continuously.
+
 ### Add a second Gmail account
 
 1. Edit `.env`: change `GMAIL_ACCOUNTS=personal` to `GMAIL_ACCOUNTS=personal,work`.

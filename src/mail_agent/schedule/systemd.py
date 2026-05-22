@@ -4,11 +4,13 @@ import subprocess
 from pathlib import Path
 
 from .types import (
+    CronSchedule,
     DailySchedule,
     IntervalSchedule,
     JobSpec,
     JobStatus,
     KeepAliveSchedule,
+    Weekday,
 )
 
 
@@ -16,6 +18,30 @@ def _quote(s: str) -> str:
     if " " in s or '"' in s:
         return '"' + s.replace('"', '\\"') + '"'
     return s
+
+
+_DAY_SHORT = {
+    Weekday.SUN: "Sun",
+    Weekday.MON: "Mon",
+    Weekday.TUE: "Tue",
+    Weekday.WED: "Wed",
+    Weekday.THU: "Thu",
+    Weekday.FRI: "Fri",
+    Weekday.SAT: "Sat",
+}
+
+
+def _cron_to_oncalendar_lines(s: CronSchedule) -> list[str]:
+    lines: list[str] = []
+    for w in s.windows:
+        # SUN=0 in Weekday (launchd numbering), but calendar convention prints it last
+        days = ",".join(
+            _DAY_SHORT[d]
+            for d in sorted(w.weekdays, key=lambda d: 7 if d == Weekday.SUN else int(d))
+        )
+        hours = ",".join(f"{h:02d}" for h in sorted(w.hours))
+        lines.append(f"OnCalendar={days} {hours}:{w.minute:02d}:00")
+    return lines
 
 
 class SystemdScheduler:
@@ -53,6 +79,8 @@ class SystemdScheduler:
             on_line = f"OnUnitActiveSec={s.seconds}s\nOnBootSec=60s"
         elif isinstance(s, DailySchedule):
             on_line = f"OnCalendar=*-*-* {s.hour:02d}:{s.minute:02d}:00"
+        elif isinstance(s, CronSchedule):
+            on_line = "\n".join(_cron_to_oncalendar_lines(s))
         else:
             raise ValueError(f"Cannot timer-schedule {s.kind}")
         return (
