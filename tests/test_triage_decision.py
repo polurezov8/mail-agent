@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from mail_agent.config import Config
 from mail_agent.graph.triage_decision import decide_for_email
