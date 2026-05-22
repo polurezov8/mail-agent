@@ -196,13 +196,17 @@ def node_slack_dispatch(state: GraphState) -> GraphState:
     # (Routing usually short-circuits before us; this is the belt-and-braces.)
     if state.get("mock") or state.get("no_slack"):
         return {}
-    from ..slack.client import is_configured
-    from ..slack.dispatcher import dispatch
+    from ..gmail.accounts import load_accounts
+    from ..notifier import TriagePayload, get_notifier
 
-    if not is_configured():
+    notifier = get_notifier()
+    if not notifier.enabled:
         return {}
 
-    summary = dispatch(state.get("results", []))
+    show_account = len(load_accounts()) > 1
+    summary = notifier.post_triage(
+        TriagePayload(results=state.get("results", []), show_account=show_account),
+    )
     return {"slack_summary": summary}
 
 

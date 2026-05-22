@@ -167,20 +167,14 @@ def search(
     console.print(t)
 
     if post_to_slack:
-        from .slack.blocks import search_results_blocks
-        from .slack.client import get_channel_id, get_client, is_configured
+        from .notifier import SearchPayload, get_notifier
 
-        if not is_configured():
+        notifier = get_notifier()
+        if not notifier.enabled:
             console.print("[yellow]Slack not configured; skipping post.[/yellow]")
             return
-        client = get_client()
-        channel = get_channel_id()
-        client.chat_postMessage(
-            channel=channel,
-            blocks=search_results_blocks(query, plan.gmail_query, hits, plan.reasoning),
-            text=f"Search · {query[:80]}",
-            unfurl_links=False,
-            unfurl_media=False,
+        notifier.post_search(
+            SearchPayload(query=query, gmail_query=plan.gmail_query, hits=hits, plan=plan),
         )
         console.print("[green]Posted to Slack.[/green]")
 
@@ -374,21 +368,13 @@ def stats(
     console.print(Panel.fit(body, title=f"Mail Stats · {period_label}", border_style="cyan"))
 
     if post_to_slack:
-        from .slack.blocks import stats_blocks
-        from .slack.client import get_channel_id, get_client, is_configured
+        from .notifier import StatsPayload, get_notifier
 
-        if not is_configured():
+        notifier = get_notifier()
+        if not notifier.enabled:
             console.print("[yellow]Slack not configured; skipping post.[/yellow]")
             return
-        client = get_client()
-        channel = get_channel_id()
-        client.chat_postMessage(
-            channel=channel,
-            blocks=stats_blocks(s),
-            text=f"Mail Stats · {period_label}",
-            unfurl_links=False,
-            unfurl_media=False,
-        )
+        notifier.post_stats(StatsPayload(metrics=s, period_label=period_label))
         console.print("[green]Posted to Slack.[/green]")
 
 
@@ -436,21 +422,13 @@ def brief(
     console.print(Panel.fit("\n".join(lines), border_style="cyan"))
 
     if post_to_slack:
-        from .slack.blocks import brief_blocks
-        from .slack.client import get_channel_id, get_client, is_configured
+        from .notifier import BriefPayload, get_notifier
 
-        if not is_configured():
+        notifier = get_notifier()
+        if not notifier.enabled:
             console.print("[yellow]Slack not configured; skipping post.[/yellow]")
             return
-        client = get_client()
-        channel = get_channel_id()
-        client.chat_postMessage(
-            channel=channel,
-            blocks=brief_blocks(summary),
-            text=f"Mail Brief · last {hours}h",
-            unfurl_links=False,
-            unfurl_media=False,
-        )
+        notifier.post_brief(BriefPayload(summary=summary, hours=hours))
         console.print("[green]Posted to Slack.[/green]")
 
 
@@ -676,14 +654,13 @@ def slack_listen() -> None:
 def slack_test() -> None:
     """Send a test message to verify Slack config."""
     load_dotenv()
-    from .slack.client import get_channel_id, get_client, is_configured
+    from .notifier import get_notifier
 
-    if not is_configured():
+    notifier = get_notifier()
+    if not notifier.enabled:
         console.print("[red]SLACK_BOT_TOKEN not set in .env[/red]")
         raise typer.Exit(code=1)
-    client = get_client()
-    channel = get_channel_id()
-    client.chat_postMessage(channel=channel, text="✅ mail-agent connected to Slack.")
+    channel = notifier.post_test_message()
     console.print(f"[green]Posted to channel {channel}[/green]")
 
 
