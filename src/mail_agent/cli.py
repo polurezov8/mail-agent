@@ -498,6 +498,27 @@ def list_accounts() -> None:
         console.print(f"  {a.name:<12} {status}  creds={a.credentials_path}")
 
 
+@app.command()
+def backup(
+    dest: str = typer.Option(
+        None, "--dest", help="Destination directory. Default: ~/Backups/mail-agent (or $MAIL_AGENT_BACKUP_DIR)."
+    ),
+    keep: int = typer.Option(7, "--keep", help="Number of recent backups to retain."),
+) -> None:
+    """Hot-copy mail_agent.db to a backup directory and rotate old copies."""
+    from pathlib import Path
+
+    from .store.backup import backup_db
+
+    load_dotenv()
+    try:
+        out = backup_db(dest_dir=Path(dest).expanduser() if dest else None, keep=keep)
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1)
+    console.print(f"[green]Backup written:[/green] {out}")
+
+
 rules_app = typer.Typer(no_args_is_help=True, add_completion=False, help="Manage triage rules.")
 app.add_typer(rules_app, name="rules")
 
@@ -679,6 +700,9 @@ def schedule_install(
     no_listener: bool = typer.Option(
         False, "--no-listener", help="Skip installing the Slack listener job."
     ),
+    no_backup: bool = typer.Option(
+        False, "--no-backup", help="Skip installing the daily backup job."
+    ),
 ) -> None:
     """Install scheduled jobs. Detects platform (launchd or systemd)."""
     load_dotenv()
@@ -692,6 +716,7 @@ def schedule_install(
         project_root=project_root,
         uv_bin=uv_bin,
         include_listener=not no_listener,
+        include_backup=not no_backup,
     )
     removed = sched.uninstall()
     if removed:

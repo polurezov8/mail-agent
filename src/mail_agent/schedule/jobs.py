@@ -5,6 +5,7 @@ from pathlib import Path
 from .types import (
     CronSchedule,
     CronWindow,
+    DailySchedule,
     JobSpec,
     KeepAliveSchedule,
     Weekday,
@@ -29,17 +30,21 @@ DEFAULT_TRIAGE_SCHEDULE = CronSchedule(
     windows=(_WORKDAY_WINDOW, _WEEKEND_WINDOW),
 )
 
+DEFAULT_BACKUP_SCHEDULE = DailySchedule(hour=9, minute=0)
+
 
 def default_jobs(
     project_root: Path,
     uv_bin: Path,
     include_listener: bool = True,
+    include_backup: bool = True,
 ) -> list[JobSpec]:
     log_dir = project_root / "logs"
     common = dict(working_dir=project_root, log_dir=log_dir)
 
     triage_cmd = [str(uv_bin), "run", "mail-agent", "triage"]
     listener_cmd = [str(uv_bin), "run", "mail-agent", "slack", "listen"]
+    backup_cmd = [str(uv_bin), "run", "mail-agent", "backup"]
 
     jobs: list[JobSpec] = [
         JobSpec(
@@ -57,6 +62,16 @@ def default_jobs(
                 description="mail-agent Slack listener (Socket Mode, always on).",
                 command=listener_cmd,
                 schedule=KeepAliveSchedule(),
+                **common,
+            )
+        )
+    if include_backup:
+        jobs.append(
+            JobSpec(
+                name=f"{PREFIX}backup",
+                description="Daily SQLite hot backup with rotation.",
+                command=backup_cmd,
+                schedule=DEFAULT_BACKUP_SCHEDULE,
                 **common,
             )
         )

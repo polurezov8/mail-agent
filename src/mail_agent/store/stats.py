@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 
 from ..models import Bucket
-from .sqlite import _conn, _db_path
+from .mail_store import MailStore
 
 
 class StatusSnapshot(BaseModel):
@@ -31,46 +31,33 @@ def _today_iso() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def get_status() -> StatusSnapshot:
-    if not _db_path().exists():
-        return StatusSnapshot(
-            total_processed=0,
-            last_processed_at=None,
-            processed_today=0,
-            bucket_counts={b.value: 0 for b in Bucket},
-            marked_read_total=0,
-            marked_read_today=0,
-        )
-
-    today = _today_iso()
-    with _conn() as conn:
-        total_processed = conn.execute("SELECT COUNT(*) FROM processed_messages").fetchone()[0]
-        last = conn.execute("SELECT MAX(processed_at) FROM processed_messages").fetchone()[0]
-        processed_today = conn.execute(
-            "SELECT COUNT(*) FROM processed_messages WHERE processed_at >= ?",
-            (today,),
-        ).fetchone()[0]
-        bucket_rows = conn.execute(
-            "SELECT bucket, COUNT(*) FROM processed_messages GROUP BY bucket"
-        ).fetchall()
-        marked_total = conn.execute(
-            "SELECT COUNT(*) FROM mark_read_audit WHERE dry_run = 0"
-        ).fetchone()[0]
-        marked_today = conn.execute(
-            "SELECT COUNT(*) FROM mark_read_audit WHERE dry_run = 0 AND marked_at >= ?",
-            (today,),
-        ).fetchone()[0]
-
-    bucket_counts = {b.value: 0 for b in Bucket}
-    bucket_counts.update(dict(bucket_rows))
+def _empty_status() -> StatusSnapshot:
     return StatusSnapshot(
-        total_processed=total_processed,
-        last_processed_at=last,
-        processed_today=processed_today,
-        bucket_counts=bucket_counts,
-        marked_read_total=marked_total,
-        marked_read_today=marked_today,
+        total_processed=0,
+        last_processed_at=None,
+        processed_today=0,
+        bucket_counts={b.value: 0 for b in Bucket},
+        marked_read_total=0,
+        marked_read_today=0,
     )
+
+
+def get_status() -> StatusSnapshot:
+    with MailStore() as store:
+        if not store.db_exists:
+            return _empty_status()
+
+        today = _today_iso()
+        bucket_counts = {b.value: 0 for b in Bucket}
+        bucket_counts.update(store.bucket_counts())
+        return StatusSnapshot(
+            total_processed=store.total_processed(),
+            last_processed_at=store.last_processed_at(),
+            processed_today=sum(store.bucket_counts(since=today).values()),
+            bucket_counts=bucket_counts,
+            marked_read_total=store.total_mark_read(),
+            marked_read_today=store.mark_read_count(since=today),
+        )
 
 
 class TopRule(BaseModel):
@@ -110,6 +97,22 @@ _PERIOD_HOURS = {
 }
 
 
+def _empty_metrics(period: str, since_iso: str | None) -> MetricsSnapshot:
+    return MetricsSnapshot(
+        period=period,
+        since=since_iso,
+        total_processed=0,
+        bucket_counts={b.value: 0 for b in Bucket},
+        source_counts={},
+        rule_top=[],
+        marked_read=0,
+        corrections=0,
+        uncertain_band=0,
+        daily=[],
+        top_senders_auto_marked=[],
+    )
+
+
 def compute_metrics(
     period: str = "week",
     accounts: list[str] | None = None,
@@ -122,124 +125,40 @@ def compute_metrics(
     )
     since_iso = since_dt.isoformat() if since_dt else None
 
-    if not _db_path().exists():
-        return MetricsSnapshot(
-            period=period,
-            since=since_iso,
-            total_processed=0,
-            bucket_counts={b.value: 0 for b in Bucket},
-            source_counts={},
-            rule_top=[],
-            marked_read=0,
-            corrections=0,
-            uncertain_band=0,
-            daily=[],
-            top_senders_auto_marked=[],
-        )
+    with MailStore() as store:
+        if not store.db_exists:
+            return _empty_metrics(period, since_iso)
 
-    # Build WHERE clause for processed_messages (time + optional account filter)
-    pm_conds: list[str] = []
-    pm_args: list = []
-    if since_iso:
-        pm_conds.append("processed_at >= ?")
-        pm_args.append(since_iso)
-    if accounts:
-        ph = ",".join("?" * len(accounts))
-        pm_conds.append(f"account IN ({ph})")
-        pm_args.extend(accounts)
-    where = ("WHERE " + " AND ".join(pm_conds)) if pm_conds else ""
-    args = tuple(pm_args)
-
-    # Separate time-only args for corrections (cross-account by sender design)
-    base_args = (since_iso,) if since_iso else ()
-
-    # Account filter fragment for mark_read_audit (also has account column)
-    if accounts:
-        _ph = ",".join("?" * len(accounts))
-        mr_acct_clause = f" AND account IN ({_ph})"
-        mr_acct_args = tuple(accounts)
-    else:
-        mr_acct_clause = ""
-        mr_acct_args = ()
-
-    with _conn() as conn:
-        # Totals + buckets
-        bucket_rows = conn.execute(
-            f"SELECT bucket, COUNT(*) FROM processed_messages {where} GROUP BY bucket",
-            args,
-        ).fetchall()
         bucket_counts = {b.value: 0 for b in Bucket}
-        bucket_counts.update(dict(bucket_rows))
+        bucket_counts.update(store.bucket_counts(since=since_iso, accounts=accounts))
         total_processed = sum(bucket_counts.values())
 
-        # Sources
-        source_rows = conn.execute(
-            f"SELECT source, COUNT(*) FROM processed_messages {where} GROUP BY source",
-            args,
-        ).fetchall()
-        source_counts = dict(source_rows)
+        source_counts = store.source_counts(since=since_iso, accounts=accounts)
+        rule_top = [
+            TopRule(name=name, count=count)
+            for name, count in store.rule_counts(since=since_iso, accounts=accounts, limit=10)
+        ]
+        marked_read = store.mark_read_count(since=since_iso, accounts=accounts)
+        # Corrections — cross-account by sender, intentionally not scoped to accounts.
+        corrections = store.correction_count(since=since_iso)
+        uncertain_band = store.uncertain_band_count(since=since_iso, accounts=accounts)
 
-        # Top rules
-        rule_rows = conn.execute(
-            f"SELECT rule_name, COUNT(*) FROM processed_messages "
-            f"{where + (' AND ' if where else 'WHERE ')}rule_name IS NOT NULL "
-            f"GROUP BY rule_name ORDER BY COUNT(*) DESC LIMIT 10",
-            args,
-        ).fetchall()
-        rule_top = [TopRule(name=n, count=c) for n, c in rule_rows]
-
-        # Marked read
-        mr_where = "WHERE dry_run = 0" + (" AND marked_at >= ?" if since_iso else "") + mr_acct_clause
-        marked_read = conn.execute(
-            f"SELECT COUNT(*) FROM mark_read_audit {mr_where}",
-            base_args + mr_acct_args,
-        ).fetchone()[0]
-
-        # Corrections — cross-account by sender, intentionally not scoped
-        corr_where = "WHERE corrected_at >= ?" if since_iso else ""
-        corrections = conn.execute(
-            f"SELECT COUNT(*) FROM corrections {corr_where}",
-            base_args,
-        ).fetchone()[0]
-
-        # Uncertain band
-        unc_where = (
-            "WHERE dry_run = 0 AND source LIKE 'llm%' "
-            "AND confidence >= 0.85 AND confidence < 0.95 AND reviewed_at IS NULL"
-            + (" AND marked_at >= ?" if since_iso else "")
-            + mr_acct_clause
-        )
-        uncertain_band = conn.execute(
-            f"SELECT COUNT(*) FROM mark_read_audit {unc_where}",
-            base_args + mr_acct_args,
-        ).fetchone()[0]
-
-        # Daily activity (last N days where N = period length, or last 30 for "all")
-        daily_n = 30 if period == "all" else max(1, hours // 24 or 1)
+        # Daily activity (last N days where N = period length, or last 30 for "all").
+        daily_n = 30 if period == "all" else max(1, (hours or 0) // 24 or 1)
         cutoff_iso = (
             datetime.now(timezone.utc) - timedelta(days=daily_n)
         ).isoformat()
-        daily_rows = conn.execute(
-            "SELECT substr(processed_at, 1, 10) AS day, COUNT(*) "
-            "FROM processed_messages WHERE processed_at >= ?"
-            + (f" AND account IN ({','.join('?' * len(accounts))})" if accounts else "")
-            + " GROUP BY day ORDER BY day",
-            (cutoff_iso, *(accounts or ())),
-        ).fetchall()
-        daily = [DailyCount(date=d, total=c) for d, c in daily_rows]
+        daily = [
+            DailyCount(date=day, total=count)
+            for day, count in store.daily_processed_counts(since=cutoff_iso, accounts=accounts)
+        ]
 
-        # Top auto-marked senders
-        sender_where = (
-            "WHERE dry_run = 0 AND from_email IS NOT NULL AND from_email != ''"
-            + (" AND marked_at >= ?" if since_iso else "")
-            + mr_acct_clause
-        )
-        sender_rows = conn.execute(
-            f"SELECT from_email, COUNT(*) FROM mark_read_audit {sender_where} "
-            f"GROUP BY from_email ORDER BY COUNT(*) DESC LIMIT 5",
-            base_args + mr_acct_args,
-        ).fetchall()
-        top_senders = [TopSender(from_email=e, count=c) for e, c in sender_rows]
+        top_senders = [
+            TopSender(from_email=email, count=count)
+            for email, count in store.top_senders_auto_marked(
+                since=since_iso, accounts=accounts, limit=5
+            )
+        ]
 
     return MetricsSnapshot(
         period=period,
@@ -257,23 +176,18 @@ def compute_metrics(
 
 
 def get_recent_audit(limit: int = 10) -> list[AuditEntry]:
-    if not _db_path().exists():
-        return []
-    with _conn() as conn:
-        rows = conn.execute(
-            "SELECT marked_at, from_email, subject, rule_name, source, confidence, dry_run "
-            "FROM mark_read_audit ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-    return [
-        AuditEntry(
-            marked_at=marked_at,
-            from_email=from_email or "",
-            subject=subject or "",
-            rule_name=rule_name,
-            source=source,
-            confidence=confidence,
-            dry_run=bool(dry_run),
-        )
-        for marked_at, from_email, subject, rule_name, source, confidence, dry_run in rows
-    ]
+    with MailStore() as store:
+        if not store.db_exists:
+            return []
+        return [
+            AuditEntry(
+                marked_at=ex.marked_at,
+                from_email=ex.from_email,
+                subject=ex.subject,
+                rule_name=ex.rule_name,
+                source=ex.source,
+                confidence=ex.confidence,
+                dry_run=ex.dry_run,
+            )
+            for ex in store.recent_mark_read(limit=limit)
+        ]
