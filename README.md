@@ -1,7 +1,7 @@
 # 📬 Mail agent
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://docs.python.org/3/)
-[![Tests](https://img.shields.io/badge/tests-267%20passing-brightgreen.svg)](#tests)
+[![Tests](https://img.shields.io/badge/tests-321%20passing-brightgreen.svg)](#tests)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-yes-success.svg)](#)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -53,7 +53,7 @@ uv run mail-agent doctor            # end-to-end health check
 uv run mail-agent schedule install  # launchd (macOS) or systemd (Linux)
 ```
 
-Default cadence: Mon–Fri at 10:00, 12:00, 14:00, 16:00, 18:00; Sat–Sun at 10:00 and 18:00. The Slack listener stays running continuously.
+Default cadence: Mon–Fri at 10:00, 12:00, 14:00, 16:00, 18:00; Sat–Sun at 10:00 and 18:00. The Slack listener stays running continuously. A daily SQLite backup also runs at 09:00 — pass `--no-backup` to `schedule install` to opt out, or `--no-listener` to skip the Slack daemon.
 
 ### Add a second Gmail account
 
@@ -173,7 +173,8 @@ mail-agent review [N]
 mail-agent setup-gmail
 mail-agent list-accounts
 mail-agent doctor
-mail-agent schedule install|status|restart|uninstall
+mail-agent backup [--dest PATH] [--keep N]
+mail-agent schedule install [--no-listener] [--no-backup] | status | restart | uninstall
 mail-agent eval run [--min-bucket-accuracy N]
 mail-agent init
 ```
@@ -200,7 +201,7 @@ DM the bot any free-text question and the inbox analyst fetches full email bodie
 ## Tests
 
 ```bash
-uv run pytest -q                                   # 267 tests, ~0.7s
+uv run pytest -q                                   # 321 tests, ~0.6s
 uv run ruff check src tests
 uv run mail-agent eval run --min-bucket-accuracy 0.85
 ```
