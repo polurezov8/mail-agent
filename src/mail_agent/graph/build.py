@@ -290,7 +290,7 @@ def build_graph():
     g.add_conditional_edges(
         "persist",
         _route_after_persist,
-        {"mark_read": "mark_read", "slack_dispatch": "slack_dispatch"},
+        {"mark_read": "mark_read", "slack_dispatch": "slack_dispatch", "report": "report"},
     )
     g.add_conditional_edges(
         "mark_read",
