@@ -119,6 +119,43 @@ def test_synthesise_returns_analysis_answer(llm_config, monkeypatch):
     assert answer.format_hint in ("table", "bullet_list", "paragraph", "number")
 
 
+def test_synthesise_returns_fallback_on_truncated_output(llm_config, monkeypatch):
+    """LLM output truncated at max_tokens → parser raises ValidationError on empty
+    tool args. synthesise must return a clean fallback, not leak the Pydantic error."""
+
+    class _FakeStructured:
+        def invoke(self, messages):
+            AnalysisAnswer(**{})  # reproduces the empty-args ValidationError
+
+    class _FakeModel:
+        def with_structured_output(self, _schema):
+            return _FakeStructured()
+
+    monkeypatch.setattr("mail_agent.analyst.ChatAnthropic", lambda **kw: _FakeModel())
+
+    results = [
+        ExtractionResult(
+            message_id="m1",
+            from_email="noreply@apple.com",
+            subject="Receipt",
+            received_at=_dt(),
+            extracted={"amount": 9.99},
+        ),
+        ExtractionResult(
+            message_id="m2",
+            from_email="noreply@apple.com",
+            subject="Receipt 2",
+            received_at=_dt(),
+            extracted={"amount": 4.99},
+        ),
+    ]
+    answer = synthesise(results, "sum prices", "total Apple charges", llm_config)
+    assert isinstance(answer, AnalysisAnswer)
+    assert answer.format_hint == "paragraph"
+    assert answer.source_count == 2  # relevant emails are known even when synthesis fails
+    assert "too long" in answer.answer.lower() or "couldn't" in answer.answer.lower()
+
+
 # ── analyse_inbox (orchestrator) ───────────────────────────────────────────────
 
 def test_analyse_inbox_end_to_end(llm_config, monkeypatch):

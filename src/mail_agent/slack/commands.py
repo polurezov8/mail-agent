@@ -382,7 +382,7 @@ def dispatch(text: str, respond: Respond, fallback_to_search: bool = False) -> N
         handle_triage(respond)
         return
     sub = parts[0].lower()
-    if sub in ("triage", "run"):
+    if sub in ("triage", "run") or (sub == "mail" and len(parts) == 1):
         handle_triage(respond)
     elif sub == "status":
         handle_status(respond)

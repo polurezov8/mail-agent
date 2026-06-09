@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from langchain_anthropic import ChatAnthropic
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from .config import LLMConfig
 
@@ -170,19 +170,32 @@ def synthesise(
             for r in relevant
         ]
     )
-    return structured.invoke(
-        [
-            {"role": "system", "content": _SYNTHESISE_SYSTEM},
-            {
-                "role": "user",
-                "content": (
-                    f"Question: {question}\n"
-                    f"Synthesis instruction: {instruction}\n"
-                    f"Extracted data ({len(relevant)} emails):\n{payload}"
-                ),
-            },
-        ]
-    )
+    try:
+        return structured.invoke(
+            [
+                {"role": "system", "content": _SYNTHESISE_SYSTEM},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Question: {question}\n"
+                        f"Synthesis instruction: {instruction}\n"
+                        f"Extracted data ({len(relevant)} emails):\n{payload}"
+                    ),
+                },
+            ]
+        )
+    except ValidationError:
+        # LLM output truncated at max_tokens → parser sees empty tool args.
+        # Surface a clean answer instead of leaking the raw Pydantic error.
+        logger.warning("synthesise: structured output failed (likely truncated)")
+        return AnalysisAnswer(
+            answer=(
+                "Couldn't synthesize an answer — the result was too long or the "
+                "question too vague. Try a more specific question."
+            ),
+            format_hint="paragraph",
+            source_count=len(relevant),
+        )
 
 
 def analyse_inbox(question: str, cfg: LLMConfig) -> AnalysisAnswer:

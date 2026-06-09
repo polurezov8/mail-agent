@@ -58,3 +58,27 @@ def test_dispatch_corrections_undo_missing_id_warns():
     dispatch("corrections undo", respond)
     assert respond.calls
     assert "Usage" in respond.calls[0]["text"] or "ID" in respond.calls[0]["text"]
+
+
+def test_dispatch_bare_mail_runs_triage(monkeypatch):
+    """Bare `mail` DM behaves like `/mail` and `/mail triage` — triage, not analysis."""
+    triaged = []
+    asked = []
+    monkeypatch.setattr("mail_agent.slack.commands.handle_triage", lambda respond: triaged.append(True))
+    monkeypatch.setattr("mail_agent.slack.commands.handle_ask", lambda respond, q: asked.append(q))
+
+    dispatch("mail", _RespondSpy(), fallback_to_search=True)
+    assert triaged == [True]
+    assert asked == []
+
+
+def test_dispatch_mail_prefixed_nl_query_still_asks(monkeypatch):
+    """`mail me the invoices` is an NL question, not a triage trigger."""
+    triaged = []
+    asked = []
+    monkeypatch.setattr("mail_agent.slack.commands.handle_triage", lambda respond: triaged.append(True))
+    monkeypatch.setattr("mail_agent.slack.commands.handle_ask", lambda respond, q: asked.append(q))
+
+    dispatch("mail me the invoices", _RespondSpy(), fallback_to_search=True)
+    assert triaged == []
+    assert asked == ["mail me the invoices"]
